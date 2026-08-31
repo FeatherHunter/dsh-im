@@ -1,3 +1,6 @@
+import fs from 'node:fs/promises';
+import path from 'node:path';
+
 import QRCode from 'qrcode';
 import {
   conversationKey,
@@ -179,6 +182,63 @@ function artifactFailureText(fileName, error) {
     default:
       return t('结果文件「{name}」已生成，但暂时未能发送，请稍后重试。', { name });
   }
+}
+
+// ========== Private patch (feishu attachments): workspace snapshot diff ==========
+// Generic fallback that detects files freshly written into an allowed workspace
+// during a turn, so results can be returned even when the model never emits an
+// explicit artifact. Mirrors the private/custom implementation.
+const SNAPSHOT_ALLOWED_EXTS = new Set([
+  '.html', '.htm', '.pdf', '.png', '.jpg', '.jpeg', '.gif', '.webp',
+  '.txt', '.md', '.csv', '.xlsx', '.xls', '.doc', '.docx', '.ppt', '.pptx',
+]);
+
+async function snapshotFiles(allowedRoots) {
+  const map = new Map();
+  async function walk(dirPosix, depth = 0) {
+    if (depth > 6) return;
+    let entries;
+    try {
+      const dirFs = dirPosix.replace(/\\/g, path.sep);
+      entries = await fs.readdir(dirFs, { withFileTypes: true });
+    } catch { return; }
+    for (const ent of entries) {
+      const fullPosix = path.posix.join(dirPosix, ent.name);
+      const fullFs = fullPosix.replace(/\\/g, path.sep);
+      if (ent.isFile()) {
+        const ext = path.posix.extname(ent.name).toLowerCase();
+        if (!SNAPSHOT_ALLOWED_EXTS.has(ext)) continue;
+        try {
+          const st = await fs.stat(fullFs);
+          if (st.size > 0 && st.size <= 5 * 1024 * 1024) {
+            map.set(fullPosix, { mtimeMs: st.mtimeMs, size: st.size });
+          }
+        } catch {}
+      } else if (ent.isDirectory()) {
+        if (ent.name === 'node_modules' || ent.name === '.git' || ent.name === '.tmp') continue;
+        if (ent.name.startsWith('.') && ent.name !== '.dsh' && depth > 0) continue;
+        await walk(fullPosix, depth + 1);
+      }
+    }
+  }
+  for (const root of allowedRoots) {
+    const rp = root.replace(/\\/g, '/');
+    await walk(rp);
+  }
+  return map;
+}
+
+async function diffSnapshot(beforeMap, allowedRoots) {
+  const afterMap = await snapshotFiles(allowedRoots);
+  const newFiles = [];
+  for (const [absPath, info] of afterMap) {
+    const before = beforeMap.get(absPath);
+    if (!before || info.mtimeMs > before.mtimeMs + 1000) {
+      newFiles.push({ absPath, name: path.posix.basename(absPath), size: info.size, mtimeMs: info.mtimeMs });
+    }
+  }
+  newFiles.sort((a, b) => b.mtimeMs - a.mtimeMs);
+  return newFiles.slice(0, 5);
 }
 
 function answerTextForDelivery(answer, artifacts) {
@@ -561,8 +621,24 @@ export class FeishuHarnessBridge {
       this.#contextEnhancement,
       event.message.chat_type === 'p2p' ? 'direct' : event.message.chat_type === 'group' ? 'group' : null,
     ));
+    // Private patch (mobile repro): diagnostic log for inbound messages, so
+    // mobile-only payload shapes leave a trace when parsing goes wrong.
+    this.#logger.debug?.('[dsh-feishu] inbound', {
+      message_type: event?.message?.message_type,
+      chat_type: event?.message?.chat_type,
+      message_id: event?.message?.message_id,
+      content_preview: String(event?.message?.content ?? '').slice(0, 500),
+    });
     const processingReaction = this.#beginReaction(messageId);
     const commandMessage = extractInboundMessage(event, this.#client);
+    // Private patch (mobile repro): what the parser actually extracted.
+    this.#logger.debug?.('[dsh-feishu] extracted', {
+      message_id: event?.message?.message_id,
+      message_type: event?.message?.message_type,
+      hasImages: hasInboundImages(commandMessage),
+      text_length: commandMessage.content?.length ?? 0,
+      image_count: commandMessage.images?.length ?? 0,
+    });
     const commandText = nonEmptyString(commandMessage.content) ?? '';
     const batchText = event.message.message_type === 'text'
       ? nonEmptyString(extractText(event)) ?? ''
@@ -3075,6 +3151,130 @@ export class FeishuHarnessBridge {
     };
   }
 
+  /** Private patch: strip <media> tags out of an answer and collect the files
+   * they reference. Returns { cleanedText, attachments } like the parser. */
+  async #extractAnswerMedia(answer) {
+    if (typeof answer !== 'string' || !answer.trim()) {
+      return { cleanedText: answer ?? '', attachments: [] };
+    }
+    const allowedRoots = await this.#getAllowedRoots().catch(() => []);
+    if (!allowedRoots.length) return { cleanedText: answer, attachments: [] };
+    return extractMediaAttachments(answer, { allowedRoots });
+  }
+
+  /** Private patch: deliver one parsed attachment through the upstream channel
+   * API, which expects a materialized artifact-shaped object carrying bytes. */
+  async #sendAttachmentFile(chatId, att, { replyTo } = {}) {
+    const bytes = await fs.readFile(att.absPath);
+    const file = {
+      artifactId: att.absPath,
+      deliveryKey: att.absPath,
+      fileName: att.name ?? path.basename(att.absPath),
+      size: bytes.byteLength,
+      bytes,
+    };
+    if (isImageAttachment(att)) {
+      await this.#channel.sendImage(chatId, file, { replyTo, signal: this.#signal });
+    } else {
+      await this.#channel.sendFile(chatId, file, { replyTo, signal: this.#signal });
+    }
+    this.#status.attachmentsSent = (this.#status.attachmentsSent ?? 0) + 1;
+  }
+
+  async #getAllowedRoots() {
+    try {
+      const list = typeof this.#harness.listWorkspaces === 'function'
+        ? await this.#harness.listWorkspaces({ signal: this.#signal })
+        : [];
+      const current = typeof this.#harness.currentWorkspace === 'function'
+        ? this.#harness.currentWorkspace()
+        : null;
+      const roots = new Set();
+      if (typeof current === 'string' && current) roots.add(current);
+      if (Array.isArray(list)) {
+        for (const p of list) if (typeof p === 'string' && p) roots.add(p);
+      }
+      return [...roots];
+    } catch {
+      return [];
+    }
+  }
+
+  async #sendAttachments(chatId, answer, { replyTo, beforeSnapshot } = {}) {
+    if (!answer || typeof answer !== 'string') {
+      return;
+    }
+    if (!this.#channel?.sendImage && !this.#channel?.sendFile) {
+      return;
+    }
+    let allowedRoots;
+    try {
+      allowedRoots = await this.#getAllowedRoots();
+    } catch (e) {
+      return;
+    }
+    if (!allowedRoots.length) {
+      return;
+    }
+    let parsed;
+    try {
+      parsed = await extractAttachments(answer, { allowedRoots });
+    } catch (e) {
+      return;
+    }
+    let attachments = parsed.attachments;
+    // 通用兜底：快照对比，支持所有文件类型，不写死mtime/html
+    if (beforeSnapshot instanceof Map) {
+      try {
+        const implicit = await diffSnapshot(beforeSnapshot, allowedRoots);
+        const seen = new Set(attachments.map(a => a.absPath));
+        for (const f of implicit) {
+          if (seen.has(f.absPath)) continue;
+          if (attachments.length >= 20) break;
+          // 总大小 20MB 限制
+          const total = attachments.reduce((s,a)=>s+(a.size||0),0);
+          if (total + f.size > 20*1024*1024) continue;
+          attachments.push({ absPath: f.absPath, name: f.name, size: f.size });
+          seen.add(f.absPath);
+        }
+        if (implicit.length) { /* merged */ }
+      } catch (e) {
+      }
+    }
+    if (!attachments.length) {
+      return;
+    }
+    for (const att of attachments) {
+      try {
+        await this.#sendAttachmentFile(chatId, att, { replyTo });
+        this.#status.attachmentsSent = (this.#status.attachmentsSent ?? 0) + 1;
+      } catch (error) {
+        this.#status.attachmentErrors = (this.#status.attachmentErrors ?? 0) + 1;
+        this.#logger.warn?.(`[dsh-feishu] failed to send attachment ${att.absPath}:`, error.message);
+        this.#status.lastError = error.message ?? String(error);
+      }
+    }
+  }
+
+  // ========== 隔离扩展：仅处理以 media 开头的标签（本次需求） ==========
+  // 模拟飞书开放平台与 Hermes 插件的媒体标签格式，以 <media 开头
+  // 格式：<media src="D:\path\to\file.html" type="file" />
+  // 文本清理：仅删除匹配到的 media 标签，其他文本保持不变，错格式原样暴露以便报障
+  async #sendMediaAttachments(chatId, attachments, { replyTo } = {}) {
+    if (!attachments?.length) return;
+    if (!this.#channel?.sendImage && !this.#channel?.sendFile) return;
+    for (const att of attachments) {
+      try {
+        await this.#sendAttachmentFile(chatId, att, { replyTo });
+        this.#status.attachmentsSent = (this.#status.attachmentsSent ?? 0) + 1;
+      } catch (error) {
+        this.#status.attachmentErrors = (this.#status.attachmentErrors ?? 0) + 1;
+        this.#logger.warn?.(`[dsh-feishu] failed to send media attachment ${att.absPath}:`, error.message);
+        this.#status.lastError = error.message ?? String(error);
+      }
+    }
+  }
+
   async #sendAnswerText(chatId, answer, { deliveryId, presentation }) {
     const providerMessageIds = [];
     for (const chunk of splitText(answer)) {
@@ -3174,12 +3374,15 @@ export class FeishuHarnessBridge {
         askOptions: this.#interactionAskOptions(event, key, message.files),
       });
       markAskComplete();
+      // Private patch (feishu media isolation): strip <media> tags from the
+      // answer text so raw tags never reach the chat.
+      const media = await this.#extractAnswerMedia(answer);
       let textReceipt;
       let textSendError = null;
       try {
         textReceipt = await this.#sendAnswerText(
           chatId,
-          answerTextForDelivery(answer, artifacts),
+          answerTextForDelivery(media.cleanedText, artifacts),
           {
             deliveryId: messageId,
             presentation: 'feishu-text',
@@ -3193,6 +3396,8 @@ export class FeishuHarnessBridge {
         );
       }
       const delivery = await this.#deliverArtifacts(chatId, messageId, artifacts, textReceipt);
+      // Private patch: deliver <media>-referenced files after the artifact pipeline.
+      await this.#sendMediaAttachments(chatId, media.attachments, { replyTo: messageId });
       const artifactDispatched = delivery.receipt.artifacts.some(
         ({ outcome }) => outcome === 'sent' || outcome === 'unknown',
       );
@@ -3209,6 +3414,7 @@ export class FeishuHarnessBridge {
     let promptStarted = false;
     let completedAnswer = '';
     let completedArtifacts = [];
+    let completedMedia = null; // Private patch (feishu media isolation)
     let stream;
     try {
       stream = await this.#channel.stream(chatId, {
@@ -3234,7 +3440,10 @@ export class FeishuHarnessBridge {
           markAskComplete();
           completedAnswer = completed.answer;
           completedArtifacts = completed.artifacts ?? [];
-          await controller.setContent(answerTextForDelivery(completedAnswer, completedArtifacts));
+          // Private patch (feishu media isolation): the stream card shows the
+          // answer without <media> tags; referenced files are sent afterwards.
+          completedMedia = await this.#extractAnswerMedia(completedAnswer);
+          await controller.setContent(answerTextForDelivery(completedMedia.cleanedText, completedArtifacts));
         },
       }, { replyTo: messageId });
     } catch (error) {
@@ -3244,12 +3453,15 @@ export class FeishuHarnessBridge {
           '[dsh-feishu] native stream failed after generation; sending final text:',
           error.message,
         );
+        // Private patch (feishu media isolation): strip <media> tags from the
+        // fallback text as well.
+        const media = await this.#extractAnswerMedia(completedAnswer);
         let textReceipt;
         let textSendError = null;
         try {
           textReceipt = await this.#sendAnswerText(
             chatId,
-            answerTextForDelivery(completedAnswer, completedArtifacts),
+            answerTextForDelivery(media.cleanedText, completedArtifacts),
             {
               deliveryId: messageId,
               presentation: 'feishu-text-fallback',
@@ -3268,6 +3480,8 @@ export class FeishuHarnessBridge {
           completedArtifacts,
           textReceipt,
         );
+        // Private patch: deliver <media>-referenced files after the artifact pipeline.
+        await this.#sendMediaAttachments(chatId, media.attachments, { replyTo: messageId });
         const artifactDispatched = delivery.receipt.artifacts.some(
           ({ outcome }) => outcome === 'sent' || outcome === 'unknown',
         );
@@ -3294,12 +3508,15 @@ export class FeishuHarnessBridge {
         askOptions: this.#interactionAskOptions(event, key, message.files),
       });
       markAskComplete();
+      // Private patch (feishu media isolation): strip <media> tags from the
+      // fallback text as well.
+      const media = await this.#extractAnswerMedia(answer);
       let textReceipt;
       let textSendError = null;
       try {
         textReceipt = await this.#sendAnswerText(
           chatId,
-          answerTextForDelivery(answer, artifacts),
+          answerTextForDelivery(media.cleanedText, artifacts),
           {
             deliveryId: messageId,
             presentation: 'feishu-text-fallback',
@@ -3313,6 +3530,8 @@ export class FeishuHarnessBridge {
         );
       }
       const delivery = await this.#deliverArtifacts(chatId, messageId, artifacts, textReceipt);
+      // Private patch: deliver <media>-referenced files after the artifact pipeline.
+      await this.#sendMediaAttachments(chatId, media.attachments, { replyTo: messageId });
       const artifactDispatched = delivery.receipt.artifacts.some(
         ({ outcome }) => outcome === 'sent' || outcome === 'unknown',
       );
@@ -3335,6 +3554,8 @@ export class FeishuHarnessBridge {
         providerMessageIds: providerMessageIdsFor(stream),
       }),
     );
+    // Private patch: deliver <media>-referenced files after the artifact pipeline.
+    await this.#sendMediaAttachments(chatId, completedMedia?.attachments ?? [], { replyTo: messageId });
     this.#status.streamResponses = (this.#status.streamResponses ?? 0) + 1;
     return delivery;
   }
