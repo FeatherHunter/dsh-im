@@ -7,3 +7,5 @@ coverage/
 *.tgz
 .DS_Store
 .idea/
+debug-attachments.log
+.scratch/

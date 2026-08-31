@@ -5,8 +5,8 @@ import { homedir, tmpdir } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
-const PACKAGE_NAME = '@xmanrui/dsh-im';
-const DEFAULT_SOURCE = 'github:xmanrui/dsh-im';
+const PACKAGE_NAME = '@feather_wch/dsh-im';
+const DEFAULT_SOURCE = 'github:FeatherHunter/dsh-im';
 const LEGACY_PACKAGES = [
   '@xmanrui/dsh-feishu',
   '@xmanrui/dsh-weixin',
@@ -82,7 +82,7 @@ try {
     for (const packageName of legacy) {
       runDsh(['plugin', '--profile', profile, 'remove', packageName]);
     }
-    console.log('\nIM 机器人插件已安装。请重启 dsh web、刷新浏览器，然后打开「设置 → IM机器人」。');
+    console.log('\nIM 机器人插件已安装。请重启 dsh web，然后打开「设置 → 插件 → IM机器人」。');
     if (legacy.size > 0) {
       console.log('已用 dsh-im 替换独立飞书/微信/钉钉插件；原有凭据和扫码绑定保持不变。');
     }

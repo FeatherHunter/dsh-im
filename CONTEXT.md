@@ -1,77 +1,47 @@
-# DeepSeek Harness IM
+# CONTEXT — dsh-im 私有 Fork
 
-本上下文描述 dsh-im 如何把不同即时通信平台中的用户意图和 DeepSeek Harness 的工作过程连接起来。项目的核心价值不是渠道数量，而是让用户在所在渠道中自然、可靠地完成 Harness 任务。
+> 让 AI 一眼看懂这个工作区在做什么、怎么做、上次聊到哪。
 
-## Language
+## 1. 项目是什么
+- **本仓库**：`FeatherHunter/dsh-im`，`fork` 自 `xmanrui/dsh-im@0.13.0`（MIT），单插件统一接入 9 个 IM 渠道到 **DeepSeek Harness**：飞书 / 微信 / 钉钉 / 企业微信 / QQ / Slack / Telegram / Discord / WhatsApp。单插件、单设置入口、多机器人、多工作区/会话绑定。
+- **形态**：`Node >=22.19`，`ESM`，`Host + Client` 双构建（`plugin-src/host` + `plugin-src/client`），DSH Cordis 插件（`cordis.patch.yml -> xmanrui-dsh-im`），发布物 `lib/` + `plugin-src/`。
+- **当前分支策略**：见 ADR-0001。`main` 永远是官方镜像（只做 `upstream` 同步），私货在 `private/custom`（本分支）及 `feat/*` 上。
 
-**语义消息（Semantic Message）**：
-不依赖具体 IM 平台、能够完整表达用户输入及其上下文的一条消息，包括内容、引用关系和会话位置。
-_Avoid_: 统一文本、通用消息体
+## 2. 为什么 Fork
+- 同步官方更新 + 叠加私有需求（飞书双向文件/图片/HTML）。
+- MIT 允许任意修改、私有发布；小而通用的改动可 PR 回上游，大而业务的留在私有分支。
 
-**语义交互（Semantic Interaction）**：
-Harness 等待用户完成的一次有状态操作，例如审批、单选、多选或补充输入。
-_Avoid_: 按钮事件、命令回复
+## 3. 分支与 Git 规则
+- `origin = FeatherHunter/dsh-im`（可写），`upstream = xmanrui/dsh-im`（只读，需 `git remote add upstream ...`）。
+- **日常**：`git checkout main && git fetch upstream && git merge upstream/main && git push origin main`
+- **开发**：`git checkout -b feat/xxx main` -> 改 -> `push -u origin feat/xxx` -> PR 回 `upstream:main` 或合到 `private/custom`。
+- **同步后**：`git checkout private/custom && git rebase main`（或 `merge`），有冲突仅在 `private` 分支解，`main` 保持干净。
 
-**产物（Artifact）**：
-Harness 任务读取或产生、需要在 Harness 与用户所在渠道之间安全传递的文件或媒体。
-_Avoid_: 附件路径、下载地址
+## 4. 关键目录
+- `src/channels/feishu/`：飞书长连接、消息抽取（`message-utils.mjs`）、Harness 桥（`bridge.mjs`）、流式卡片（`feishu-channel.mjs`）
+- `src/channels/shared/image-prompt.mjs` / `text-harness-bridge.mjs` / `harness-client.mjs`：图片处理与 Harness 会话
+- `plugin-src/host` + `plugin-src/client`：DSH 插件宿主与前端设置页
+- `test/`：`node --test` 全量，`npm run check = test + build + verify-package`
 
-**产物来源（Artifact Provenance）**：
-证明一个现有或新建的出站产物由当前 Harness Session/Turn 通过受信工具结果显式登记的可验证记录；它证明交付意图和路由，不要求文件必须由当前 Turn 创建。
-_Avoid_: 回答里的路径、最新文件
+## 5. 私有需求（本 Fork 目标）
+- **2a 飞书 -> DSH**：支持用户发送 `文件/图片/HTML` 给 DSH（下载 `im.v1.messageResource.get type=file`，落盘到 workspace，回显路径给模型）
+- **2b DSH -> 飞书**：模型产出 `图片/文件/HTML` 能作为附件回传（`im.v1.image.create / file.create` + `msg_type: file/image`）
+- 范围外的 8 个渠道保持上游行为，不主动改。
 
-**会话路由（Conversation Route）**：
-唯一确定消息所属机器人、聊天及话题或线程的会话位置。
-_Avoid_: Chat ID、会话 Key
+## 6. 工作方式（AI 约定）
+- **Issue 追踪**：GitHub Issues（`docs/agents/issue-tracker.md`）。`gh issue create/view/list/comment/edit`。
+- **标签**：Triage 五角色 `needs-triage/needs-info/ready-for-agent/ready-for-human/wontfix` + Wayfinder `wayfinder:map/research/prototype/grilling/task`（`docs/agents/triage-labels.md`），不另建标签。
+- **Wayfinder**：`wayfinder:map` 单一地图 issue，子任务为 `sub-issue` 或任务清单，依赖用 GitHub 原生 `blocked_by`。
+  - **当前地图**：[#14 Map: Private Fork 私有化发布与上游同步](https://github.com/FeatherHunter/dsh-im/issues/14) — 新会话 AI 必先读此地图的 `Destination/Decisions/ frontier`
+- **构建校验**：`npm install && npm run check` 必须绿；产物不含凭据。
 
-**投递目标（Delivery Target）**：
-由 `botId + targetId` 稳定标识、并绑定到可更新会话路由的主动投递位置；它不依赖当前 Harness Session 或最近一条入站消息。
-_Avoid_: Session ID、ChatRef、临时 Webhook
+## 7. 术语
+- **渠道（Channel）**：飞书等 9 个 IM 平台。
+- **机器人（Bot）**：单渠道下的一个 App 实例，独立凭据/工作区/会话映射。
+- **会话绑定（Session Binding）**：聊天 -> Harness `sessionId` 的映射，存于 `conversation-state-store`。
+- **流式卡片**：飞书 `cardkit` 流式消息，用于思考/工具进度。
 
-**渠道能力（Channel Capability）**：
-某个机器人实例在当前权限和运行条件下可以可靠提供的原生输入、交互或呈现能力。
-_Avoid_: 平台支持、SDK 功能
-
-**原生呈现（Native Presentation）**：
-渠道依据自身交互习惯呈现同一语义，例如卡片、按钮、消息编辑、流式回复或输入状态。
-_Avoid_: 特殊适配、渠道特例
-
-**呈现意图（Presentation Intent）**：
-Harness 输出在进入渠道前必须保留的内容结构和格式含义，例如纯文本、Markdown、进度、交互或产物；它不指定某个平台的控件或语法。
-_Avoid_: 回答字符串、Telegram Rich Message、统一富文本
-
-**渠道原生动作（Native Channel Action）**：
-渠道为承载一次语义任务而执行的平台专属操作，例如创建 Discord Thread、更新飞书卡片或上传附件；它属于渠道边界，不要求其他渠道提供同名操作。
-_Avoid_: 公共命令、通用渠道方法
-
-**选择呈现（Selection Presentation）**：
-单选或多选在渠道中的实际实现形态，只能表述为原生控件、组合交互或文字降级；判断能力时必须同时说明呈现形式和已经验证的范围。
-_Avoid_: 支持多选、能力允许时、统一选择器
-
-**明确降级（Explicit Fallback）**：
-渠道缺少所需能力时，保持业务语义并向用户说明限制的替代体验。
-_Avoid_: 兼容模式、静默忽略
-
-**能力切片（Capability Slice）**：
-围绕一个完整用户价值，从统一语义、安全策略到各渠道原生呈现和验收的端到端建设单元。
-_Avoid_: 渠道任务、接口改造
-
-**标杆渠道（Reference Channel）**：
-一项能力切片中最先完成真实客户端闭环、其原生机制最适合验证该语义和体验的渠道。标杆渠道按能力选择，不是永久主渠道。
-_Avoid_: 主渠道、默认渠道
-
-**用户价值优先级（User Value Priority）**：
-依据核心任务完成度、语义准确性、移动端操作成本以及安全与可靠性，决定能力切片的建设先后顺序。
-_Avoid_: 功能数量排序、渠道用户量排序
-
-**渠道适配性（Channel Fit）**：
-某项语义能力与渠道原生机制、权限覆盖、接口稳定性和可测试性之间的匹配程度，用于选择标杆渠道并决定原生实现或明确降级。
-_Avoid_: 渠道排名、平台先进程度
-
-**渠道行为基线（Channel Behavior Baseline）**：
-语义迁移开始前，某个渠道已经向用户提供的任务流程、控制能力、状态语义和原生体验的可验证集合；后续实现可以改善它，但不能使其中任何能力消失或退化。
-_Avoid_: 当前代码、旧实现、测试现状
-
-**等价接管（Parity Cutover）**：
-新语义路径在覆盖渠道行为基线、通过回归并具备回滚能力后，才取得某项消息或能力的唯一处理权。
-_Avoid_: 直接替换、重写完成
+## 8. 下一步（给 AI）
+- **先读地图**：`gh issue view 14 --json body --jq .body`，挑 `frontier` 首个未认领 `wayfinder:task`（`gh issue edit <n> --add-assignee @me` 认领）
+- 在 `private/custom` 上完成 2a/2b 的 `message-utils` + `file-prompt` + `bridge#sendFile` 落地，补 `test/channels/feishu/*.test.mjs`。
+- 保持 `main` 可一键同步官方：`git fetch upstream && git checkout main && git merge --ff-only upstream/main && git push origin main && git checkout private/custom && git rebase main`。

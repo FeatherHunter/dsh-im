@@ -1,7 +1,7 @@
 {
-  "name": "@xmanrui/dsh-im",
-  "version": "4.2.1",
-  "description": "把九种 IM 机器人和公网 AI Office 接入本机 DeepSeek Harness。 Connect nine IM channels and a public AI Office to a local DeepSeek Harness.",
+  "name": "@feather_wch/dsh-im",
+  "version": "0.14.0",
+  "description": "鎶婁節绉?IM 鏈哄櫒浜哄拰鍏綉 AI Office 鎺ュ叆鏈満 DeepSeek Harness锛堟敮鎸侀涔︺€佸井淇°€侀拤閽夈€佷紒涓氬井淇°€丵Q銆丼lack銆乀elegram銆丏iscord銆乄hatsApp 鍜?AI Office锛夈€?Connect nine IM channels and a public AI Office to a local DeepSeek Harness. Fork of @xmanrui/dsh-im 鈥?Feishu HTML media fix (private/custom).",
   "keywords": [
     "deepseek-harness",
     "dsh",
@@ -23,27 +23,27 @@
     "ai-office"
   ],
   "author": {
-    "name": "xmanrui",
-    "url": "https://github.com/xmanrui"
+    "name": "FeatherHunter",
+    "url": "https://github.com/FeatherHunter"
   },
   "contributors": [
     {
-      "name": "C3H3-AI",
-      "url": "https://github.com/C3H3-AI"
+      "name": "xmanrui",
+      "url": "https://github.com/xmanrui"
     },
     {
-      "name": "divingleee",
-      "url": "https://github.com/divingleee"
+      "name": "C3H3-AI",
+      "url": "https://github.com/C3H3-AI"
     }
   ],
   "license": "MIT",
   "type": "module",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/xmanrui/dsh-im.git"
+    "url": "git+https://github.com/FeatherHunter/dsh-im.git"
   },
-  "homepage": "https://github.com/xmanrui/dsh-im#readme",
-  "bugs": "https://github.com/xmanrui/dsh-im/issues",
+  "homepage": "https://github.com/FeatherHunter/dsh-im#readme",
+  "bugs": "https://github.com/FeatherHunter/dsh-im/issues",
   "publishConfig": {
     "access": "public"
   },
@@ -64,8 +64,6 @@
     "plugin-src",
     "scripts",
     "src",
-    "PROACTIVE_DELIVERY.md",
-    "PROACTIVE_DELIVERY.en.md",
     "LICENSE",
     "README.md",
     "README.en.md",
@@ -89,7 +87,7 @@
   "scripts": {
     "build": "node plugin-src/client/build.mjs && node plugin-src/host/build.mjs",
     "test": "node --test test/*.test.mjs test/channels/*/*.test.mjs",
-    "check": "npm run build && npm test && node scripts/verify-package.mjs"
+    "check": "npm test && npm run build && node scripts/verify-package.mjs"
   },
   "engines": {
     "node": ">=22.19"
@@ -100,17 +98,15 @@
     "@wecom/aibot-node-sdk": "1.0.7",
     "dingtalk-stream": "2.1.4",
     "qrcode": "1.5.4",
+    "sharp": "^0.35.3",
     "undici": "7.29.0"
   },
   "devDependencies": {
-    "@deepseek-ai/cordis": "4.0.1",
     "@larksuiteoapi/node-sdk": "1.73.0",
     "@whiskeysockets/baileys": "7.0.0-rc14",
     "esbuild": "0.25.9",
-    "https-proxy-agent": "5.0.1",
     "react": "18.3.1",
     "react-dom": "18.3.1",
-    "react-test-renderer": "18.3.1",
-    "semver": "7.8.5"
+    "react-test-renderer": "18.3.1"
   }
 }
