@@ -310,9 +310,6 @@ export async function promptContentForMessage(message, {
   return content;
 }
 
-export function imagePromptUserMessage(error) {
-  return error instanceof ImagePromptError ? error.userMessage : null;
-}
 /** Return only allowlisted, user-safe image failure details. */
 export function imagePromptDiagnostic(error) {
   if (error instanceof ImagePromptError) {
