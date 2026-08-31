@@ -313,3 +313,25 @@ export async function promptContentForMessage(message, {
 export function imagePromptUserMessage(error) {
   return error instanceof ImagePromptError ? error.userMessage : null;
 }
+/** Return only allowlisted, user-safe image failure details. */
+export function imagePromptDiagnostic(error) {
+  if (error instanceof ImagePromptError) {
+    return {
+      code: 'image-prompt-error',
+      reason: error.code,
+      userMessage: error.userMessage,
+    };
+  }
+  if (error?.code !== 'attachment-error' || typeof error?.details?.reason !== 'string') {
+    return null;
+  }
+  const reason = error.details.reason;
+  const userMessage = Object.hasOwn(HOST_ATTACHMENT_USER_MESSAGES, reason)
+    ? t(HOST_ATTACHMENT_USER_MESSAGES[reason])
+    : null;
+  return userMessage ? { code: 'attachment-error', reason, userMessage } : null;
+}
+
+export function imagePromptUserMessage(error) {
+  return imagePromptDiagnostic(error)?.userMessage ?? null;
+}
