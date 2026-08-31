@@ -1,4 +1,7 @@
-export const WEIXIN_STYLE_ID = 'xmanrui-dsh-im-weixin-settings';
+import manifest from '../../../../package.json' with { type: 'json' };
+const PACKAGE_NAME = manifest.name;
+const BASE_ID = PACKAGE_NAME.replace(/^@/, '').replace(/\//g, '-').replace(/_/g, '-');
+export const WEIXIN_STYLE_ID = `${BASE_ID}-weixin-settings`;
 
 const CSS = String.raw`
 .dxw-page {
@@ -107,7 +110,7 @@ export function installWeixinStyles() {
   const existing = document.querySelector(`style[data-plugin-css="${WEIXIN_STYLE_ID}"]`);
   if (existing) return () => {};
   const style = document.createElement('style');
-  style.dataset.plugin = '@xmanrui/dsh-im';
+  style.dataset.plugin = PACKAGE_NAME;
   style.dataset.pluginCss = WEIXIN_STYLE_ID;
   style.textContent = CSS;
   document.head.appendChild(style);

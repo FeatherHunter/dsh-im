@@ -1,4 +1,7 @@
-export const DINGTALK_STYLE_ID = 'xmanrui-dsh-im-dingtalk-settings';
+import manifest from '../../../../package.json' with { type: 'json' };
+const PACKAGE_NAME = manifest.name;
+const BASE_ID = PACKAGE_NAME.replace(/^@/, '').replace(/\//g, '-').replace(/_/g, '-');
+export const DINGTALK_STYLE_ID = `${BASE_ID}-dingtalk-settings`;
 
 const CSS = String.raw`
 .ddt-page {
@@ -126,7 +129,7 @@ export function installDingtalkStyles() {
   const existing = document.querySelector(`style[data-plugin-css="${DINGTALK_STYLE_ID}"]`);
   if (existing) return () => {};
   const style = document.createElement('style');
-  style.dataset.plugin = '@xmanrui/dsh-im';
+  style.dataset.plugin = PACKAGE_NAME;
   style.dataset.pluginCss = DINGTALK_STYLE_ID;
   style.textContent = CSS;
   document.head.appendChild(style);

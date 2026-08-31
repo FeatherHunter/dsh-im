@@ -1,4 +1,7 @@
-export const OFFICE_STYLE_ID = 'xmanrui-dsh-im-office-settings';
+import manifest from '../../../../package.json' with { type: 'json' };
+const PACKAGE_NAME = manifest.name;
+const BASE_ID = PACKAGE_NAME.replace(/^@/, '').replace(/\//g, '-').replace(/_/g, '-');
+export const OFFICE_STYLE_ID = `${BASE_ID}-office-settings`;
 
 const CSS = `
 .dof-page { --dof-accent: var(--dsw-alias-brand-primary, #3964fe); }

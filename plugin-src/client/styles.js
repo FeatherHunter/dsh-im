@@ -1,4 +1,7 @@
-export const IM_STYLE_ID = 'xmanrui-dsh-im-settings';
+import manifest from '../../package.json' with { type: 'json' };
+const PACKAGE_NAME = manifest.name;
+const BASE_ID = PACKAGE_NAME.replace(/^@/, '').replace(/\//g, '-').replace(/_/g, '-');
+export const IM_STYLE_ID = `${BASE_ID}-settings`;
 
 const CSS = String.raw`
 .dim-page {
@@ -491,7 +494,7 @@ export function installImStyles() {
   const existing = document.querySelector(`style[data-plugin-css="${IM_STYLE_ID}"]`);
   if (existing) return () => {};
   const style = document.createElement('style');
-  style.dataset.plugin = '@xmanrui/dsh-im';
+  style.dataset.plugin = PACKAGE_NAME;
   style.dataset.pluginCss = IM_STYLE_ID;
   style.textContent = CSS;
   document.head.appendChild(style);

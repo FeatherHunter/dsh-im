@@ -51,7 +51,7 @@ export async function fetchNpmRelease(fetchImpl = globalThis.fetch, timeoutMs = 
     const integrity = value.dist?.integrity;
     if (tarball.origin !== new URL(NPM_REGISTRY).origin || tarball.username || tarball.password
       || tarball.search || tarball.hash
-      || tarball.pathname !== `/@xmanrui/dsh-im/-/dsh-im-${version}.tgz`
+      || tarball.pathname !== `/${PACKAGE_NAME}/-/dsh-im-${version}.tgz`
       || typeof integrity !== 'string' || !/^sha512-[A-Za-z0-9+/]{86}==$/.test(integrity)) {
       throw updateError('invalid-release');
     }

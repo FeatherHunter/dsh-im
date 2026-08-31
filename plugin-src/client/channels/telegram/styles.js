@@ -1,4 +1,7 @@
-export const TELEGRAM_STYLE_ID = 'xmanrui-dsh-im-telegram-settings';
+import manifest from '../../../../package.json' with { type: 'json' };
+const PACKAGE_NAME = manifest.name;
+const BASE_ID = PACKAGE_NAME.replace(/^@/, '').replace(/\//g, '-').replace(/_/g, '-');
+export const TELEGRAM_STYLE_ID = `${BASE_ID}-telegram-settings`;
 
 const CSS = String.raw`
 .dtg-page { --ddt-accent: #229ed9; --ddt-accent-deep: #1687bd; --ddt-accent-wash: #eaf7fd; }
@@ -39,7 +42,7 @@ export function installTelegramStyles() {
   const existing = document.querySelector(`style[data-plugin-css="${TELEGRAM_STYLE_ID}"]`);
   if (existing) return () => {};
   const style = document.createElement('style');
-  style.dataset.plugin = '@xmanrui/dsh-im';
+  style.dataset.plugin = PACKAGE_NAME;
   style.dataset.pluginCss = TELEGRAM_STYLE_ID;
   style.textContent = CSS;
   document.head.appendChild(style);

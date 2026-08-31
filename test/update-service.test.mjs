@@ -8,9 +8,9 @@ import { createUpdateService, fetchNpmRelease } from '../plugin-src/host/update-
 
 function release(version = '3.0.8', fields = {}) {
   return {
-    name: '@xmanrui/dsh-im', version, engines: { node: '>=22.19' },
+    name: '@feather_wch/dsh-im', version, engines: { node: '>=22.19' },
     dist: {
-      tarball: `https://registry.npmjs.org/@xmanrui/dsh-im/-/dsh-im-${version}.tgz`,
+      tarball: `https://registry.npmjs.org/@feather_wch/dsh-im/-/dsh-im-${version}.tgz`,
       integrity: `sha512-${Buffer.alloc(64, 1).toString('base64')}`,
     },
     ...fields,
@@ -21,7 +21,7 @@ async function fixture(t, options = {}) {
   const homeDir = await mkdtemp(join(tmpdir(), 'dsh-im-update-service-'));
   const profileDir = join(homeDir, 'profiles', 'test');
   await mkdir(profileDir, { recursive: true });
-  await writeFile(join(profileDir, 'package.json'), '{"dependencies":{"@xmanrui/dsh-im":"3.0.7"}}\n');
+  await writeFile(join(profileDir, 'package.json'), '{"dependencies":{"@feather_wch/dsh-im":"3.0.7"}}\n');
   await writeFile(join(profileDir, 'pnpm-lock.yaml'), 'lockfileVersion: 9\n');
   await writeFile(join(profileDir, '.npmrc'), '//example.test/:_authToken=do-not-copy\n');
   const environment = {
@@ -45,7 +45,7 @@ async function fixture(t, options = {}) {
     runtime, runningVersion: '3.0.7', nodeVersion: '22.20.0', now: () => state.time,
     fetchImpl: async (url, init) => {
       state.fetches++;
-      assert.equal(url, 'https://registry.npmjs.org/%40xmanrui%2Fdsh-im/latest');
+      assert.equal(url, 'https://registry.npmjs.org/%40feather_wch%2Fdsh-im/latest');
       assert.equal(init.redirect, 'error');
       if (state.failFetch) throw new Error('private-path-and-token');
       return new Response(JSON.stringify(state.release));

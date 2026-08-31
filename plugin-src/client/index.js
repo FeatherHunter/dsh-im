@@ -1,6 +1,9 @@
 import * as React from 'react';
 import manifest from '../../package.json' with { type: 'json' };
 
+const PACKAGE_NAME = manifest.name;
+const PLUGIN_ID = PACKAGE_NAME.replace(/^@/, '').replace(/\//g, '-').replace(/_/g, '-');
+
 import {
   DingtalkLogoGlyph,
   DiscordLogoGlyph,
@@ -377,7 +380,7 @@ export function apply(ctx) {
 
   ctx.slots.inject('settings.section', () => ctx.slots.register({
     name: 'settings.section',
-    id: 'xmanrui-dsh-im',
+    id: PLUGIN_ID,
     order: 21,
     label: () => t('IM机器人'),
     locale: IM_LOCALE_NAMESPACE,

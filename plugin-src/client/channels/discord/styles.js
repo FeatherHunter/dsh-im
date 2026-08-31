@@ -1,4 +1,7 @@
-export const DISCORD_STYLE_ID = 'xmanrui-dsh-im-discord-settings';
+import manifest from '../../../../package.json' with { type: 'json' };
+const PACKAGE_NAME = manifest.name;
+const BASE_ID = PACKAGE_NAME.replace(/^@/, '').replace(/\//g, '-').replace(/_/g, '-');
+export const DISCORD_STYLE_ID = `${BASE_ID}-discord-settings`;
 
 const CSS = String.raw`
 .ddc-page { --ddt-accent: #5865f2; --ddt-accent-deep: #4752c4; --ddt-accent-wash: #eef0ff; }
@@ -11,7 +14,7 @@ export function installDiscordStyles() {
   const existing = document.querySelector(`style[data-plugin-css="${DISCORD_STYLE_ID}"]`);
   if (existing) return () => {};
   const style = document.createElement('style');
-  style.dataset.plugin = '@xmanrui/dsh-im';
+  style.dataset.plugin = PACKAGE_NAME;
   style.dataset.pluginCss = DISCORD_STYLE_ID;
   style.textContent = CSS;
   document.head.appendChild(style);

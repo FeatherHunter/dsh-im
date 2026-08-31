@@ -1,4 +1,7 @@
-export const FEISHU_STYLE_ID = "xmanrui-dsh-im-feishu-settings";
+import manifest from '../../../../package.json' with { type: 'json' };
+const PACKAGE_NAME = manifest.name;
+const BASE_ID = PACKAGE_NAME.replace(/^@/, '').replace(/\//g, '-').replace(/_/g, '-');
+export const FEISHU_STYLE_ID = `${BASE_ID}-feishu-settings`;
 
 const CSS = String.raw`
 .bxf-page {
@@ -562,7 +565,7 @@ export function installFeishuStyles() {
   }
 
   const style = document.createElement("style");
-  style.dataset.plugin = "@xmanrui/dsh-im";
+  style.dataset.plugin = PACKAGE_NAME;
   style.dataset.pluginCss = FEISHU_STYLE_ID;
   style.textContent = CSS;
   document.head.appendChild(style);

@@ -714,7 +714,7 @@ test('manual commands use the current profile and a known target without downgra
     const renderer = await mount(t, async () => ok(snapshot(fields)));
     await click(renderer, fields.blockedReason === 'pending-restart' ? '待手动重启' : '检查更新');
     assert.equal(manualCommandOf(renderer),
-      `dsh plugin --profile ${expected} add -w @xmanrui/dsh-im@${version}`);
+      `dsh plugin --profile ${expected} add -w @feather_wch/dsh-im@${version}`);
     assert.equal(renderer.root.findByType('textarea').props.readOnly, true);
     assert.match(textOf(renderer.toJSON()), /自动更新失败可以使用命令更新：/);
     assert.doesNotMatch(textOf(renderer.toJSON()), /通常只需手动重启/);
@@ -748,7 +748,7 @@ test('manual commands remain available after a failed npm check and explain the 
     throw new Error('npm unavailable');
   });
   await click(renderer, '检查更新');
-  assert.match(manualCommandOf(renderer), /@xmanrui\/dsh-im@latest$/);
+  assert.match(manualCommandOf(renderer), /@feather_wch\/dsh-im@latest$/);
   assert.match(textOf(renderer.toJSON()), /尚未确认目标版本.*执行时 npm 的 latest/);
   assert.match(textOf(renderer.toJSON()), /DSH_HOME 一致/);
   assert.equal(buttonNamed(renderer, '复制命令').props.disabled, false);

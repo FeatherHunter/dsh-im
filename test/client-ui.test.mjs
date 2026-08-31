@@ -754,7 +754,7 @@ test('client registers one top-level bilingual IM settings section with a direct
     assert.deepEqual(Object.keys(dictionaries[0].value.en).sort(), Object.keys(dictionaries[0].value.zh).sort());
     assert.equal(registrations.length, 1);
     assert.equal(registrations[0].options.name, 'settings.section');
-    assert.equal(registrations[0].options.id, 'xmanrui-dsh-im');
+    assert.equal(registrations[0].options.id, 'feather-wch-dsh-im');
     assert.equal(registrations[0].options.order, 21);
     assert.equal(registrations[0].options.locale, IM_LOCALE_NAMESPACE);
     assert.equal(registrations[0].options.label(), 'IM bots');

@@ -5,6 +5,9 @@ import compareVersionsDescending from 'semver/functions/rcompare.js';
 
 import { h } from './i18n.js';
 import { createPollScheduler } from './lifecycle.js';
+import manifest from '../../package.json' with { type: 'json' };
+
+const PACKAGE_NAME = manifest.name;
 
 export const UPDATE_RPC_CHANNEL = '/dsh-im';
 
@@ -109,7 +112,7 @@ function manualUpdateCommand(snapshot) {
     ? [...targets, snapshot.runningVersion, snapshot.installedVersion]
       .filter(validVersion).sort(compareVersionsDescending)[0]
     : 'latest';
-  return `dsh plugin --profile ${profileArgument} add -w @xmanrui/dsh-im@${version}`;
+  return `dsh plugin --profile ${profileArgument} add -w ${PACKAGE_NAME}@${version}`;
 }
 
 function ManualUpdateCommand({ command, disabled, sourceInstall, desktop }) {
@@ -167,7 +170,7 @@ function ManualUpdateCommand({ command, disabled, sourceInstall, desktop }) {
           : h(React.Fragment, null,
               h('rect', { x: 7, y: 7, width: 10, height: 11, rx: 1.5 }),
               h('path', { d: 'M5 13H3.5A1.5 1.5 0 0 1 2 11.5v-8A1.5 1.5 0 0 1 3.5 2h8A1.5 1.5 0 0 1 13 3.5V5' }))))),
-      command.endsWith('@xmanrui/dsh-im@latest') ? h('p', { className: 'dim-updateManualHint' },
+      command.endsWith(`${PACKAGE_NAME}@latest`) ? h('p', { className: 'dim-updateManualHint' },
         '尚未确认目标版本，此命令安装执行时 npm 的 latest 版本。') : null,
       h('p', { className: 'dim-updateManualHint' }, desktop
         ? '请在当前 Desktop 的内置终端执行，完成后手动重启。'

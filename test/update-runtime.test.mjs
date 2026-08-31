@@ -56,7 +56,7 @@ async function fixture(t, { desktop = false, name = 'update-test', hoisted = fal
   const profileDir = join(homeDir, 'profiles', name);
   const installedLink = join(profileDir, 'node_modules', PACKAGE_NAME);
   const installedDir = hoisted ? installedLink
-    : join(profileDir, 'node_modules/.pnpm/@xmanrui+dsh-im@3.0.8/node_modules', PACKAGE_NAME);
+    : join(profileDir, 'node_modules/.pnpm/@feather_wch+dsh-im@3.0.8/node_modules', PACKAGE_NAME);
   await plugin(installedDir);
   if (!hoisted) {
     await mkdir(join(installedLink, '..'), { recursive: true });
@@ -207,7 +207,7 @@ test('inspection reads new disk versions and snapshots without require cache', a
   const f = await fixture(t);
   const runtime = f.runtime();
   const before = await runtime.inspect();
-  const newDir = join(f.profileDir, 'node_modules/.pnpm/@xmanrui+dsh-im@3.0.9/node_modules', PACKAGE_NAME);
+  const newDir = join(f.profileDir, 'node_modules/.pnpm/@feather_wch+dsh-im@3.0.9/node_modules', PACKAGE_NAME);
   await plugin(newDir, '3.0.9');
   await unlink(f.installedLink);
   await symlink(newDir, f.installedLink, 'dir');
@@ -288,7 +288,7 @@ test('Desktop installation reuses runPlugin with one pinned npm target and no re
   const confirmed = await runtime.inspect();
   assert.deepEqual(await runtime.install('3.0.9', { expectedInstallationKey: confirmed.installationKey }), { exitCode: 0, signal: null });
   assert.equal(f.calls.length, 2);
-  assert.deepEqual(f.calls[0].args, ['config', 'get', '@xmanrui:registry', '--json']);
+  assert.deepEqual(f.calls[0].args, ['config', 'get', '@feather_wch:registry', '--json']);
   assert.deepEqual(f.calls[1].args, ['add', '-w', '--save-exact', `${PACKAGE_NAME}@3.0.9`, `--registry=${NPM_REGISTRY}`]);
   assert.equal(f.calls[1].cwd, f.profileDir);
   assert.equal(restartCalls, 0);
@@ -299,7 +299,7 @@ test('CLI installation uses the running Node and verified dsh entry, without she
   f.options.execArgv = ['--expose-internals'];
   await f.runtime().install('3.0.9');
   const [preflight, install] = f.calls;
-  assert.deepEqual(preflight.argv, ['pnpm', 'config', 'get', '@xmanrui:registry', '--json']);
+  assert.deepEqual(preflight.argv, ['pnpm', 'config', 'get', '@feather_wch:registry', '--json']);
   assert.equal(preflight.cwd, f.profileDir);
   assert.deepEqual(install.argv, [process.execPath, '--expose-internals', f.cliEntry, 'plugin', '--profile', 'update-test',
     'add', '-w', '--save-exact', `${PACKAGE_NAME}@3.0.9`, `--registry=${NPM_REGISTRY}`]);

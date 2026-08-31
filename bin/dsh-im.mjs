@@ -5,7 +5,9 @@ import { homedir, tmpdir } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
-const PACKAGE_NAME = '@feather_wch/dsh-im';
+import manifest from '../package.json' with { type: 'json' };
+
+const PACKAGE_NAME = manifest.name;
 const DEFAULT_SOURCE = 'github:FeatherHunter/dsh-im';
 const LEGACY_PACKAGES = [
   '@xmanrui/dsh-feishu',
