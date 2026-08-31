@@ -4,7 +4,7 @@
 
 ## 1. 项目是什么
 - **本仓库**：`FeatherHunter/dsh-im`，`fork` 自 `xmanrui/dsh-im@0.13.0`（MIT），单插件统一接入 9 个 IM 渠道到 **DeepSeek Harness**：飞书 / 微信 / 钉钉 / 企业微信 / QQ / Slack / Telegram / Discord / WhatsApp。单插件、单设置入口、多机器人、多工作区/会话绑定。
-- **形态**：`Node >=22.19`，`ESM`，`Host + Client` 双构建（`plugin-src/host` + `plugin-src/client`），DSH Cordis 插件（`cordis.patch.yml -> xmanrui-dsh-im`），发布物 `lib/` + `plugin-src/`。
+- **形态**：`Node >=22.19`，`ESM`，`Host + Client` 双构建（`plugin-src/host` + `plugin-src/client`），DSH Cordis 插件（`cordis.patch.yml -> feather-wch-dsh-im`，`id`/`loader`/`PACKAGE_NAME` 均从 `package.json:name` 动态派生，见 ADR-0002），发布物 `lib/` + `plugin-src/`。
 - **当前分支策略**：见 ADR-0001。`main` 永远是官方镜像（只做 `upstream` 同步），私货在 `private/custom`（本分支）及 `feat/*` 上。
 
 ## 2. 为什么 Fork

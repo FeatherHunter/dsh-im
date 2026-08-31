@@ -49,9 +49,10 @@ export async function fetchNpmRelease(fetchImpl = globalThis.fetch, timeoutMs = 
     }
     const tarball = new URL(value.dist?.tarball);
     const integrity = value.dist?.integrity;
+    const unscoped = PACKAGE_NAME.split('/')[1];
     if (tarball.origin !== new URL(NPM_REGISTRY).origin || tarball.username || tarball.password
       || tarball.search || tarball.hash
-      || tarball.pathname !== `/${PACKAGE_NAME}/-/dsh-im-${version}.tgz`
+      || tarball.pathname !== `/${PACKAGE_NAME}/-/${unscoped}-${version}.tgz`
       || typeof integrity !== 'string' || !/^sha512-[A-Za-z0-9+/]{86}==$/.test(integrity)) {
       throw updateError('invalid-release');
     }

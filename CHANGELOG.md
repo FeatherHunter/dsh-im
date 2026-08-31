@@ -6,6 +6,17 @@ This file records the notable changes in each dsh-im release. Its format follows
 
 ## [Unreleased]
 
+## [0.15.3] - 2026-08-31
+
+### Fixed / 修复
+
+- **去硬编码**：`fork` 后 `ModuleLoader` / `Cordis` / `自更新` 仍硬编码 `@xmanrui/dsh-im` 导致白屏，现改为从 `package.json:name` 动态派生 `PACKAGE_NAME` / `SCOPE` / `UNSCOPED` / `PLUGIN_ID` / `BASE_ID`，`plugin-src` 零字面量，`lib/` 重建后 `id: "@feather_wch/dsh-im"` 正常加载；`tarball` 校验改为 `/${PACKAGE_NAME}/-/${UNSCOPED}-${version}.tgz`，`verify` 同步动态化。下次 `fork` 改名只改一处。  Eliminated hard-coded `@xmanrui/dsh-im` left after forking which broke `ModuleLoader`/`Cordis`/self-update; all identifiers now derive from `package.json:name` (`PACKAGE_NAME`/`SCOPE`/`UNSCOPED`/`PLUGIN_ID`/`BASE_ID`), `plugin-src` has zero literals, rebuilt `lib` loads as `id: "@feather_wch/dsh-im"`; tarball check now uses `/${PACKAGE_NAME}/-/${UNSCOPED}-${version}.tgz` and `verify` is dynamic. Future forks only need to change one place.
+- **构建校验**：`npm run build && node scripts/verify-package.mjs` 通过，`client-ui 27/27` `update-ui 31/31`。
+
+### Changed / 变更
+
+- 新增 `docs/adr/0002-dynamic-package-name.md` 记录决策，`CONTEXT.md` 同步 `cordis -> feather-wch-dsh-im`。
+
 ## [4.2.1] - 2026-08-31
 
 ### Fixed / 修复
