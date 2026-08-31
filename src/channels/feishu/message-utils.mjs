@@ -1,10 +1,11 @@
 import { ImagePromptError } from '../shared/image-prompt.mjs';
+import { t } from '../shared/i18n.mjs';
 
 const FEISHU_MISSING_MESSAGE_SCOPE_CODE = 99991672;
 const FEISHU_ERROR_BODY_LIMIT = 64 * 1024;
 const FEISHU_ERROR_BODY_TIMEOUT_MS = 1_000;
 const FEISHU_IMAGE_PERMISSION_MESSAGE =
-  '飞书机器人缺少图片读取权限。请在飞书开放平台为该应用添加 im:message:readonly，发布新版本并完成必要的管理员审批后，再重新发送图片。';
+  '飞书机器人缺少图片读取权限 im:message:readonly（飞书显示为“获取单聊、群组消息”）。请私聊机器人执行 /repair 命令，或者在「IM机器人」设置页点击“补全权限”按钮并扫码。按飞书提示发布新版本、完成必要审批后，再重新发送图片。';
 
 export function conversationKey(event) {
   const chatType = event?.message?.chat_type;
@@ -119,7 +120,7 @@ function postContent(event, parsed = parsedMessageContent(event)) {
     }
   }
   // 扫描 md 文本中的 ![alt](img_xxx) 与裸 img_xxx
-  const mdImagePattern = /!\[.*?\]\(\s*(img_[a-zA-Z0-9_-]+)\s*\)/g;
+  const mdImagePattern = /!\\[.*?\\]\\(\\s*(img_[a-zA-Z0-9_-]+)\\s*\\)/g;
   const bareImgPattern = /(?:^|[^a-zA-Z0-9_-])(img_[a-zA-Z0-9_-]+)(?:[^a-zA-Z0-9_-]|$)/g;
   const hasKey = (key) => imageKeys.some((e) => (typeof e === 'string' ? e : e.key) === key);
   const scanMdText = (text) => {
@@ -188,9 +189,34 @@ async function readBoundedStream(stream, { signal, maxBytes }) {
         throw new ImagePromptError(
           'image-too-large',
           `Feishu image exceeds ${maxBytes} bytes`,
-          '图片超过 5 MB，请压缩后重试。',
+          t('图片超过 5 MB，请压缩后重试。'),
         );
       }
+      chunks.push(data);
+    }
+    signal?.throwIfAborted();
+    return Buffer.concat(chunks, size);
+  } finally {
+    signal?.removeEventListener('abort', abort);
+  }
+}
+
+async function readStream(stream, { signal }) {
+  if (!stream || typeof stream[Symbol.asyncIterator] !== 'function') {
+    throw new Error('Feishu file download returned no readable stream');
+  }
+  signal?.throwIfAborted();
+  const abort = () => stream.destroy?.(
+    signal.reason ?? new DOMException('Feishu file download aborted', 'AbortError'),
+  );
+  signal?.addEventListener('abort', abort, { once: true });
+  const chunks = [];
+  let size = 0;
+  try {
+    for await (const chunk of stream) {
+      signal?.throwIfAborted();
+      const data = Buffer.from(chunk);
+      size += data.length;
       chunks.push(data);
     }
     signal?.throwIfAborted();
@@ -295,7 +321,7 @@ async function feishuImageDownloadError(error, signal) {
   return new ImagePromptError(
     'feishu-image-permission-required',
     'Feishu image download requires the im:message:readonly tenant scope',
-    FEISHU_IMAGE_PERMISSION_MESSAGE,
+    t(FEISHU_IMAGE_PERMISSION_MESSAGE),
     { cause: error },
   );
 }
@@ -327,10 +353,30 @@ function feishuImageSource(event, client, keyOrObj) {
         throw new ImagePromptError(
           'image-too-large',
           `Feishu image declares ${size} bytes; the limit is ${maxBytes}`,
-          '图片超过 5 MB，请压缩后重试。',
+          t('图片超过 5 MB，请压缩后重试。'),
         );
       }
       return readBoundedStream(resource?.getReadableStream?.(), { signal, maxBytes });
+    },
+  };
+}
+
+function feishuFileSource(event, client, file) {
+  const key = nonEmptyString(file?.file_key);
+  if (!key) return null;
+  return {
+    name: nonEmptyString(file?.file_name) ?? 'file',
+    async load({ signal } = {}) {
+      signal?.throwIfAborted();
+      const resource = await client?.im?.v1?.messageResource?.get?.({
+        path: {
+          message_id: event.message.message_id,
+          file_key: key,
+        },
+        params: { type: 'file' },
+      });
+      signal?.throwIfAborted();
+      return readStream(resource?.getReadableStream?.(), { signal });
     },
   };
 }
@@ -353,9 +399,11 @@ export function extractInboundMessage(event, client) {
   const imageKeys = standalone ? [standalone] : post?.imageKeys ?? [];
   // 兼容旧 string[] 与新 {key,type}[] 混合
   const normalizedKeys = imageKeys.map((e) => (typeof e === 'string' ? { key: e, type: 'image' } : e));
+  const file = messageType === 'file' ? feishuFileSource(event, client, parsed) : null;
   return {
     content: messageType === 'text' ? extractText(event) ?? '' : post?.text ?? '',
     images: normalizedKeys.filter((e) => nonEmptyString(e.key)).map((entry) => feishuImageSource(event, client, entry)),
+    files: file ? [file] : [],
   };
 }
 
