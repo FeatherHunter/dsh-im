@@ -93,14 +93,9 @@ Issues and PRs are welcome via [GitHub Issues](https://github.com/FeatherHunter/
 
 <table>
   <tr>
-    <th align="center">Email</th>
     <th align="center">Feishu</th>
   </tr>
   <tr>
-    <td align="center" valign="middle">
-      <a href="mailto:longmanr307@gmail.com">longmanr307@gmail.com</a><br>
-      <sub>fallback</sub>
-    </td>
     <td align="center" valign="top">
       <a href="docs/images/feishu-qr.png"><img src="docs/images/feishu-qr.png" alt="Feishu QR code" width="240"></a><br>
       <sub>Scan to add on Feishu</sub>

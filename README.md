@@ -94,14 +94,9 @@ dsh plugin --profile web add -w ./dsh-im   # 或 node bin/dsh-im.mjs install --s
 
 <table>
   <tr>
-    <th align="center">邮箱</th>
     <th align="center">飞书</th>
   </tr>
   <tr>
-    <td align="center" valign="middle">
-      <a href="mailto:longmanr307@gmail.com">longmanr307@gmail.com</a><br>
-      <sub>备用联系</sub>
-    </td>
     <td align="center" valign="top">
       <a href="docs/images/feishu-qr.png"><img src="docs/images/feishu-qr.png" alt="飞书二维码" width="240"></a><br>
       <sub>扫码添加飞书</sub>
