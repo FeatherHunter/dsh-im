@@ -114,7 +114,7 @@ for (const channel of [...IM_CHANNELS, 'office']) {
     assert.equal(options.apiProxy, apiProxy);
     assert.equal(options.interactionScope, root);
     assert.equal(Object.hasOwn(options, 'baseUrl'), false);
-    assert.equal(options.workspace, '/test/workspace');
+    assert.ok(options.workspace.replace(/\\/g, '/').endsWith('/test/workspace'), `workspace should end with /test/workspace but got ${options.workspace}`);
     assert.equal(options.autostart, false);
   });
 

@@ -390,7 +390,7 @@ export function extractInboundMessage(event, client) {
     const imageKey = nonEmptyString(parsed?.image_key ?? parsed?.imageKey);
     const fileKey = nonEmptyString(parsed?.file_key ?? parsed?.fileKey);
     if (imageKey) standalone = { key: imageKey, type: 'image' };
-    else if (fileKey) standalone = { key: fileKey, type: 'file' };
+    else if (fileKey) standalone = { key: fileKey, type: 'file', fileName: parsed?.file_name ?? parsed?.fileName };
     else if (messageType === 'media' && post?.imageKeys?.length) {
       // media 封面可能在 post 中，退化为 post
       standalone = null;
@@ -399,11 +399,28 @@ export function extractInboundMessage(event, client) {
   const imageKeys = standalone ? [standalone] : post?.imageKeys ?? [];
   // 兼容旧 string[] 与新 {key,type}[] 混合
   const normalizedKeys = imageKeys.map((e) => (typeof e === 'string' ? { key: e, type: 'image' } : e));
-  const file = messageType === 'file' ? feishuFileSource(event, client, parsed) : null;
+  const isImageFileName = (name) => typeof name === 'string' && /\.(jpe?g|png|gif|webp|bmp|heic|heif|tiff?|svg)$/i.test(name.trim());
+  let images;
+  let files;
+  if (messageType === 'file' && standalone?.type === 'file') {
+    const fileName = standalone.fileName ?? parsed?.file_name ?? parsed?.fileName;
+    if (isImageFileName(fileName)) {
+      images = normalizedKeys.filter((e) => nonEmptyString(e.key)).map((entry) => feishuImageSource(event, client, entry));
+      files = [];
+    } else {
+      images = [];
+      const f = feishuFileSource(event, client, parsed);
+      files = f ? [f] : [];
+    }
+  } else {
+    images = normalizedKeys.filter((e) => nonEmptyString(e.key)).map((entry) => feishuImageSource(event, client, entry));
+    const f = messageType === 'file' ? feishuFileSource(event, client, parsed) : null;
+    files = f ? [f] : [];
+  }
   return {
     content: messageType === 'text' ? extractText(event) ?? '' : post?.text ?? '',
-    images: normalizedKeys.filter((e) => nonEmptyString(e.key)).map((entry) => feishuImageSource(event, client, entry)),
-    files: file ? [file] : [],
+    images,
+    files,
   };
 }
 

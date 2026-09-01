@@ -17,6 +17,7 @@ import {
   OutboundArtifactRegistry,
   createOutboundArtifactTool,
 } from '../../../src/channels/shared/semantic/artifact.mjs';
+import { defaultImagePrompt } from '../../../src/channels/shared/image-prompt.mjs';
 
 function deferred() {
   let resolve;
@@ -428,7 +429,7 @@ test('QQ sends image-only attachments to Harness and accepts the SDK file MIME f
   assert.equal(prompts.length, 1);
   assert.equal(prompts[0].sessionId, 'session-image');
   assert.deepEqual(prompts[0].content.map(({ type }) => type), ['text', 'image']);
-  assert.equal(prompts[0].content[0].text, '请分析这张图片。');
+  assert.equal(prompts[0].content[0].text, defaultImagePrompt(1));
   assert.equal(prompts[0].content[1].mediaType, 'image/png');
   assert.equal(prompts[0].content[1].name, 'diagram.PNG');
   assert.equal(Buffer.from(prompts[0].content[1].data, 'base64').equals(PNG_BYTES), true);

@@ -24,7 +24,9 @@ async function workspace(t) {
 function absoluteStagedPath(root, file) {
   assert.equal(isAbsolute(file.path), false, 'Harness receives a workspace-relative path');
   const path = resolve(root, file.path);
-  assert.equal(path.startsWith(`${resolve(root)}/`), true, 'staged path stays in the Session cwd');
+  const posixRoot = resolve(root).replace(/\\/g, '/');
+  const posixPath = path.replace(/\\/g, '/');
+  assert.equal(posixPath.startsWith(`${posixRoot}/`), true, 'staged path stays in the Session cwd');
   return path;
 }
 
@@ -146,7 +148,7 @@ test('stageInboundFiles keeps display names but makes traversal-like storage nam
   }, { workspace: root });
 
   assert.equal(staged.files[0].name, 'report:?*.txt');
-  assert.match(staged.files[0].path, /^\.dsh-im\/inbound\/turn-[^/]+\/01-report___\.txt$/);
+  assert.match(staged.files[0].path.replace(/\\/g, '/'), /^\.dsh-im\/inbound\/turn-[^/]+\/01-report___\.txt$/);
   assert.equal(await readFile(absoluteStagedPath(root, staged.files[0]), 'utf8'), 'safe');
   await staged.cleanup();
 });

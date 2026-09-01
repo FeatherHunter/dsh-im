@@ -21,6 +21,7 @@ import {
   createOutboundArtifactTool,
   releaseOutboundArtifact,
 } from '../../../src/channels/shared/semantic/artifact.mjs';
+import { defaultImagePrompt } from '../../../src/channels/shared/image-prompt.mjs';
 
 function deferred() {
   let resolve;
@@ -606,7 +607,7 @@ test('DingTalk resolves picture downloadCode lazily and sends image-only content
   assert.equal(downloads[0].maxBytes, 5 * 1024 * 1024);
   assert.equal(prompts[0].sessionId, 'session-image');
   assert.deepEqual(prompts[0].content.map(({ type }) => type), ['text', 'image']);
-  assert.equal(prompts[0].content[0].text, '请分析这张图片。');
+  assert.equal(prompts[0].content[0].text, defaultImagePrompt(1));
   assert.equal(prompts[0].content[1].mediaType, 'image/png');
   assert.equal(Buffer.from(prompts[0].content[1].data, 'base64').equals(PNG_BYTES), true);
   assert.equal(sent.at(-1).text, '钉钉图片已识别');

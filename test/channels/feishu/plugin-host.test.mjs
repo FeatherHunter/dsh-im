@@ -1197,7 +1197,7 @@ test('production assembly uses ctx credentials and the active Host apiProxy with
   assert.equal(constructed.harness.apiProxy, apiProxy);
   assert.equal(Object.hasOwn(constructed.harness, 'baseUrl'), false);
   assert.equal(constructed.harness.autostart, false);
-  assert.match(constructed.configPath, /integrations\/dsh-feishu\/config\.json$/);
+  assert.match(constructed.configPath.replace(/\\/g, '/'), /integrations\/dsh-feishu\/config\.json$/);
 
   await constructed.controller.createRuntime({
     config: {
@@ -1207,7 +1207,7 @@ test('production assembly uses ctx credentials and the active Host apiProxy with
     },
     appSecret: 'host-only',
   });
-  assert.match(constructed.statePath, /integrations\/dsh-feishu\/state\.json$/);
+  assert.match(constructed.statePath.replace(/\\/g, '/'), /integrations\/dsh-feishu\/state\.json$/);
   assert.equal(constructed.runtime.appSecret, 'host-only');
   assert.equal(constructed.runtime.wsAgent, wsAgent);
   assert.equal(constructed.runtime.slashCommands, false);
@@ -1242,8 +1242,8 @@ test('production assembly uses ctx credentials and the active Host apiProxy with
   const betaState = constructed.runtime.state;
   assert.equal(Object.hasOwn(constructed.runtime, 'outboundArtifactsEnabled'), false);
   assert.notEqual(alphaState, betaState);
-  assert.ok(constructed.statePaths.some((path) => /bots\/bot_alpha\/state\.json$/.test(path)));
-  assert.ok(constructed.statePaths.some((path) => /bots\/bot_beta\/state\.json$/.test(path)));
+  assert.ok(constructed.statePaths.some((path) => /bots\/bot_alpha\/state\.json$/.test(path.replace(/\\/g, '/'))));
+  assert.ok(constructed.statePaths.some((path) => /bots\/bot_beta\/state\.json$/.test(path.replace(/\\/g, '/'))));
   await production.close();
   assert.equal(constructed.closed, true);
   assert.equal(constructed.harnessStopped, true);

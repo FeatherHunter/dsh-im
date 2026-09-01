@@ -1205,7 +1205,7 @@ test('/sessionlist returns actionable and safe errors', async (t) => {
   assert.doesNotMatch(staleResult.message, /old bot lifecycle|private Harness detail/);
 });
 
-test('/workspacelist and /sessionlist canonicalize a symbolic-link workspace', async (t) => {
+test('/workspacelist and /sessionlist canonicalize a symbolic-link workspace', { skip: process.platform === 'win32' && 'symlink requires admin/dev mode on Windows' }, async (t) => {
   const { root } = await fixture(t);
   const canonicalWorkspace = join(root, 'canonical-workspace');
   const linkedWorkspace = join(root, 'linked-workspace');
