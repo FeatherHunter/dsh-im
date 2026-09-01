@@ -6,6 +6,12 @@ This file records the notable changes in each dsh-im release. Its format follows
 
 ## [Unreleased]
 
+## [0.15.4] - 2026-08-31
+
+### Fixed / 修复
+
+- **飞书状态卡死**：`private` 移植 `image-prompt.mjs` 时误删 `HOST_ATTACHMENT_USER_MESSAGES` 定义，`imagePromptDiagnostic` 抛 `ReferenceError`，阻塞 `Host` `feishu` 通道注册，`设置 -> 飞书` 一直 `正在读取…`。已恢复 `t` 与 `HOST_ATTACHMENT_USER_MESSAGES` 常量。
+
 ## [0.15.3] - 2026-08-31
 
 ### Fixed / 修复

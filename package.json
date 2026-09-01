@@ -1,6 +1,6 @@
 {
   "name": "@feather_wch/dsh-im",
-  "version": "0.15.3",
+  "version": "0.15.4",
   "description": "鎶婁節绉?IM 鏈哄櫒浜哄拰鍏綉 AI Office 鎺ュ叆鏈満 DeepSeek Harness锛堟敮鎸侀涔︺€佸井淇°€侀拤閽夈€佷紒涓氬井淇°€丵Q銆丼lack銆乀elegram銆丏iscord銆乄hatsApp 鍜?AI Office锛夈€?Connect nine IM channels and a public AI Office to a local DeepSeek Harness. Fork of @xmanrui/dsh-im 鈥?Feishu HTML media fix (private/custom).",
   "keywords": [
     "deepseek-harness",

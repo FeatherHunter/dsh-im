@@ -1,4 +1,16 @@
 import { createRequire } from 'node:module';
+import { t } from './i18n.mjs';
+
+const HOST_ATTACHMENT_USER_MESSAGES = Object.freeze({
+  MODEL_DOES_NOT_SUPPORT_IMAGES: '当前模型不支持图片，请用 /models 查看可用模型，再用 /model <序号> 切换后重发。',
+  IMAGE_TOO_LARGE: '图片超过宿主允许的大小，请压缩后重试。',
+  IMAGE_TOO_MANY_PIXELS: '图片分辨率过高，请压缩后重试。',
+  INVALID_IMAGE: '图片内容无效或格式不受支持，请重新发送。',
+  INVALID_IMAGE_BASE64: '未能读取图片内容，请重新发送。',
+  IMAGE_TYPE_MISMATCH: '图片格式与实际内容不一致，请重新发送。',
+  TOO_MANY_IMAGES: '一次发送的图片数量超过宿主限制，请减少后重试。',
+  IMAGES_TOO_LARGE: '图片总大小超过宿主限制，请减少图片或压缩后重试。',
+});
 
 const DEFAULT_MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 const DEFAULT_MAX_IMAGES = 20;
