@@ -5,9 +5,7 @@ import compareVersionsDescending from 'semver/functions/rcompare.js';
 
 import { h } from './i18n.js';
 import { createPollScheduler } from './lifecycle.js';
-import manifest from '../../package.json' with { type: 'json' };
-
-const PACKAGE_NAME = manifest.name;
+import { PACKAGE_NAME } from '../shared/package-meta.js';
 
 export const UPDATE_RPC_CHANNEL = '/dsh-im';
 

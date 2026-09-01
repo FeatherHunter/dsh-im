@@ -6,9 +6,9 @@ import { fileURLToPath } from 'node:url';
 
 import semver from 'semver';
 
-import manifest from '../../package.json' with { type: 'json' };
+import { PACKAGE_NAME, SCOPE, UNSCOPED } from '../shared/package-meta.js';
 
-export const PACKAGE_NAME = manifest.name;
+export { PACKAGE_NAME };
 export const NPM_REGISTRY = 'https://registry.npmjs.org/';
 
 const INSTALL_TIMEOUT_MS = 15 * 60_000;
@@ -256,7 +256,7 @@ export function createUpdateRuntime(options = {}) {
   }
 
   async function checkRegistry(runtime, signal) {
-    const scope = PACKAGE_NAME.split('/')[0];
+    const scope = SCOPE;
     const args = ['config', 'get', `${scope}:registry`, '--json'];
     const result = await run(
       (childSignal) => runtime.desktop

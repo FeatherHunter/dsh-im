@@ -2,6 +2,8 @@ import { access, readFile, readdir, stat } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
+import { BASE_ID, PACKAGE_NAME, PLUGIN_ID } from '../plugin-src/shared/package-meta.js';
+
 const root = resolve(import.meta.dirname, '..');
 
 async function readSourceTree(directory) {
@@ -83,8 +85,12 @@ const [
 ]);
 const manifest = JSON.parse(manifestText);
 const lock = JSON.parse(lockText);
-const expectedPackageName = manifest.name;
-const expectedPluginId = expectedPackageName.replace(/^@/, '').replace(/\//g, '-').replace(/_/g, '-');
+const expectedPackageName = PACKAGE_NAME;
+const expectedPluginId = PLUGIN_ID;
+const expectedBaseId = BASE_ID;
+if (manifest.name !== PACKAGE_NAME) throw new Error('package-meta PACKAGE_NAME drift from manifest');
+if (expectedPluginId !== manifest.name.replace(/^@/, '').replace(/\//g, '-').replace(/_/g, '-')) throw new Error('package-meta PLUGIN_ID drift');
+if (expectedBaseId !== expectedPluginId) throw new Error('package-meta BASE_ID must equal PLUGIN_ID');
 const escapeRegExp = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 // DSH runtime packages use module-local Symbol keys, so a second physical copy breaks Host lookup.

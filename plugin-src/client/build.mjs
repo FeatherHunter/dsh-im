@@ -3,12 +3,12 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { build } from 'esbuild';
-import manifest from '../../package.json' with { type: 'json' };
+import { PACKAGE_NAME } from '../shared/package-meta.js';
 
 const sourceDirectory = dirname(fileURLToPath(import.meta.url));
 const packageRoot = resolve(sourceDirectory, '../..');
 const outputPath = resolve(packageRoot, 'lib/client.js');
-const loaderId = process.env.DSH_IM_CLIENT_ID ?? manifest.name;
+const loaderId = process.env.DSH_IM_CLIENT_ID ?? PACKAGE_NAME;
 
 const result = await build({
   entryPoints: [resolve(sourceDirectory, 'index.js')],

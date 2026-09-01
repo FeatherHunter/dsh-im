@@ -6,6 +6,7 @@ import semver from 'semver';
 import manifest from '../../package.json' with { type: 'json' };
 import { withSessionBindingLock } from '../../src/channels/shared/session-binding-lock.mjs';
 import { NPM_REGISTRY, PACKAGE_NAME } from './update-runtime.mjs';
+import { UNSCOPED } from '../shared/package-meta.js';
 
 const ACTIVE_STATES = new Set(['installing', 'verifying']);
 const JOB_STATES = new Set([...ACTIVE_STATES, 'restart-required', 'completed', 'failed', 'interrupted']);
@@ -49,7 +50,7 @@ export async function fetchNpmRelease(fetchImpl = globalThis.fetch, timeoutMs = 
     }
     const tarball = new URL(value.dist?.tarball);
     const integrity = value.dist?.integrity;
-    const unscoped = PACKAGE_NAME.split('/')[1];
+    const unscoped = UNSCOPED;
     if (tarball.origin !== new URL(NPM_REGISTRY).origin || tarball.username || tarball.password
       || tarball.search || tarball.hash
       || tarball.pathname !== `/${PACKAGE_NAME}/-/${unscoped}-${version}.tgz`

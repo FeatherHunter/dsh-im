@@ -1,6 +1,4 @@
-import manifest from '../../../../package.json' with { type: 'json' };
-const PACKAGE_NAME = manifest.name;
-const BASE_ID = PACKAGE_NAME.replace(/^@/, '').replace(/\//g, '-').replace(/_/g, '-');
+import { BASE_ID, PACKAGE_NAME } from '../../../shared/package-meta.js';
 export const TELEGRAM_STYLE_ID = `${BASE_ID}-telegram-settings`;
 
 const CSS = String.raw`

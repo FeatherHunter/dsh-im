@@ -1,8 +1,6 @@
 import * as React from 'react';
 import manifest from '../../package.json' with { type: 'json' };
-
-const PACKAGE_NAME = manifest.name;
-const PLUGIN_ID = PACKAGE_NAME.replace(/^@/, '').replace(/\//g, '-').replace(/_/g, '-');
+import { PLUGIN_ID } from '../shared/package-meta.js';
 
 import {
   DingtalkLogoGlyph,
