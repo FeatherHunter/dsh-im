@@ -12,6 +12,10 @@ This file records the notable changes in each dsh-im release. Its format follows
 
 - **飞书状态卡死**：`private` 移植 `image-prompt.mjs` 时误删 `HOST_ATTACHMENT_USER_MESSAGES` 定义，`imagePromptDiagnostic` 抛 `ReferenceError`，阻塞 `Host` `feishu` 通道注册，`设置 -> 飞书` 一直 `正在读取…`。已恢复 `t` 与 `HOST_ATTACHMENT_USER_MESSAGES` 常量。
 
+### Note / 说明
+
+- **版本断崖**：`0.15.x` 为私版独立演进，与上游 `4.x` 不可比 `semver`（包名/ID 已分叉为 `@feather_wch/dsh-im` / `feather-wch-dsh-im`），同步节奏见 [ADR-0001](docs/adr/0001-fork-and-branch-strategy.md)。`0.15.x` is a private fork line; do not compare semver with upstream `4.x`. Sync cadence: ADR-0001.
+
 ## [0.15.3] - 2026-08-31
 
 ### Fixed / 修复
@@ -22,6 +26,7 @@ This file records the notable changes in each dsh-im release. Its format follows
 ### Changed / 变更
 
 - 新增 `docs/adr/0002-dynamic-package-name.md` 记录决策，`CONTEXT.md` 同步 `cordis -> feather-wch-dsh-im`。
+- **版本断崖**：自 `0.15.3` 起私版与上游 `4.x` 分叉独立演进，不可比 `semver`，同步节奏见 [ADR-0001](docs/adr/0001-fork-and-branch-strategy.md)。
 
 ## [4.2.1] - 2026-08-31
 

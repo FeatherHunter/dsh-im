@@ -2,7 +2,7 @@ import { access, readFile, readdir, stat } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import { BASE_ID, PACKAGE_NAME, PLUGIN_ID } from '../plugin-src/shared/package-meta.js';
+import { BASE_ID, PACKAGE_NAME, PLUGIN_ID, UNSCOPED } from '../plugin-src/shared/package-meta.js';
 
 const root = resolve(import.meta.dirname, '..');
 
@@ -91,6 +91,16 @@ const expectedBaseId = BASE_ID;
 if (manifest.name !== PACKAGE_NAME) throw new Error('package-meta PACKAGE_NAME drift from manifest');
 if (expectedPluginId !== manifest.name.replace(/^@/, '').replace(/\//g, '-').replace(/_/g, '-')) throw new Error('package-meta PLUGIN_ID drift');
 if (expectedBaseId !== expectedPluginId) throw new Error('package-meta BASE_ID must equal PLUGIN_ID');
+const expectedUnscoped = UNSCOPED;
+if (expectedUnscoped !== PACKAGE_NAME.slice(PACKAGE_NAME.indexOf('/') + 1)) throw new Error('package-meta UNSCOPED drift from PACKAGE_NAME');
+if (!expectedUnscoped || expectedUnscoped.includes('/') || expectedUnscoped.includes('@')) throw new Error('package-meta UNSCOPED must be unscoped package name');
+const expectedTarballPathname = `/${PACKAGE_NAME}/-/${UNSCOPED}-${manifest.version}.tgz`;
+if (expectedTarballPathname.includes('@xmanrui')) throw new Error('tarball pathname must not contain upstream scope');
+if (expectedTarballPathname !== `/${manifest.name}/-/${expectedUnscoped}-${manifest.version}.tgz`) throw new Error('tarball pathname drift from manifest');
+// Verify update-service derives tarball pathname from package-meta (single source of truth)
+const updateServiceSource = await readFile(resolve(root, 'plugin-src/host/update-service.mjs'), 'utf8');
+if (!updateServiceSource.includes('`/${PACKAGE_NAME}/-/${unscoped}-${version}.tgz`')) throw new Error('update-service must derive tarball pathname from PACKAGE_NAME/UNSCOPED');
+if (!updateServiceSource.includes("from '../shared/package-meta.js'") || !updateServiceSource.includes('UNSCOPED')) throw new Error('update-service must import UNSCOPED from package-meta');
 const escapeRegExp = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 // DSH runtime packages use module-local Symbol keys, so a second physical copy breaks Host lookup.

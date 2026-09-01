@@ -40,8 +40,11 @@
 - **机器人（Bot）**：单渠道下的一个 App 实例，独立凭据/工作区/会话映射。
 - **会话绑定（Session Binding）**：聊天 -> Harness `sessionId` 的映射，存于 `conversation-state-store`。
 - **流式卡片**：飞书 `cardkit` 流式消息，用于思考/工具进度。
+- **版本断崖（Version cliff）**：`0.15.x` 为私版独立演进，与上游 `4.x` 不可比 `semver`（`@feather_wch/dsh-im` / `feather-wch-dsh-im` 已分叉），同步节奏见 ADR-0001。
 
 ## 8. 下一步（给 AI）
+> **版本说明**：`0.15.x` 为私版独立演进，与上游 `4.x` 不可比 `semver`，同步节奏见 ADR-0001。不要向用户以 `semver` 对比上游版本。
+
 - **先读地图**：`gh issue view 14 --json body --jq .body`，挑 `frontier` 首个未认领 `wayfinder:task`（`gh issue edit <n> --add-assignee @me` 认领）
 - 在 `private/custom` 上完成 2a/2b 的 `message-utils` + `file-prompt` + `bridge#sendFile` 落地，补 `test/channels/feishu/*.test.mjs`。
 - 保持 `main` 可一键同步官方：`git fetch upstream && git checkout main && git merge --ff-only upstream/main && git push origin main && git checkout private/custom && git rebase main`。

@@ -22,6 +22,8 @@
 
 > This is a private Fork of [`xmanrui/dsh-im`](https://github.com/xmanrui/dsh-im) (MIT), maintained at [`FeatherHunter/dsh-im`](https://github.com/FeatherHunter/dsh-im) on branch `private/custom` and published as [`@feather_wch/dsh-im`](https://www.npmjs.com/package/@feather_wch/dsh-im). For the full upstream documentation — nine IM channels, AI Office, commands — see 👉 **[Upstream README](https://github.com/xmanrui/dsh-im/blob/main/README.en.md)**.
 
+> **Versioning**: `0.15.x` evolves independently as a private fork and must not be compared via `semver` with upstream `4.x` (package/ID forked to `@feather_wch/dsh-im` / `feather-wch-dsh-im`). Sync cadence: see [ADR-0001](docs/adr/0001-fork-and-branch-strategy.md).
+
 ## What's Enhanced in This Fork
 
 `main` always mirrors upstream (`git fetch upstream && git merge --ff-only upstream/main`); all private changes live on `private/custom`. Key deltas vs upstream:

@@ -23,6 +23,8 @@
 
 > 本仓库是 [`xmanrui/dsh-im`](https://github.com/xmanrui/dsh-im) 的 Fork（MIT），由 [`FeatherHunter/dsh-im`](https://github.com/FeatherHunter/dsh-im) 在 `private/custom` 分支持续维护，发布为 [`@feather_wch/dsh-im`](https://www.npmjs.com/package/@feather_wch/dsh-im)。上游的完整功能文档、九通道接入、AI Office 与命令说明请见 👉 **[原作者 README](https://github.com/xmanrui/dsh-im/blob/main/README.md)**。
 
+> **版本说明**：`0.15.x` 为私版独立演进，与上游 `4.x` 不可比 `semver`（包名 `@feather_wch/dsh-im` 与 ID `feather-wch-dsh-im` 已分叉），同步节奏见 [ADR-0001](docs/adr/0001-fork-and-branch-strategy.md)。
+
 ## 本 Fork 做了什么
 
 `main` 分支永远镜像上游（`git fetch upstream && git merge --ff-only upstream/main`），私有定制全部沉淀在 `private/custom`。相较上游，当前私版核心增量如下：
