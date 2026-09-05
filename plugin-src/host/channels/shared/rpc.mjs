@@ -1,4 +1,5 @@
 import { SET_CONTEXT_ENHANCEMENT_ENDPOINT, validContextEnhancementPayload } from './context-enhancement-rpc.mjs';
+import { SET_ACCESS_POLICY_ENDPOINT, validAccessPolicyPayload } from './access-policy-rpc.mjs';
 import { resolveRpcAuthority } from '../../rpc-authority.mjs';
 import { publicConnectionTestResult } from '../../../../src/channels/shared/connection-test.mjs';
 import {
@@ -10,6 +11,7 @@ import {
   SET_AGENT_PRESET_ENDPOINT,
   validAgentPresetPayload,
 } from './agent-preset-rpc.mjs';
+import { SET_MODEL_ENDPOINT, validModelPayload } from './model-setting-rpc.mjs';
 
 export const TOKEN_BOT_ENDPOINTS = Object.freeze({
   status: 'connection.status',
@@ -17,8 +19,10 @@ export const TOKEN_BOT_ENDPOINTS = Object.freeze({
   reconnectBot: 'bot.reconnect',
   deleteBot: 'bot.delete',
   setWorkspace: SET_WORKSPACE_ENDPOINT,
+  setModel: SET_MODEL_ENDPOINT,
   setAgentPreset: SET_AGENT_PRESET_ENDPOINT,
   setContextEnhancement: SET_CONTEXT_ENHANCEMENT_ENDPOINT,
+  setAccessPolicy: SET_ACCESS_POLICY_ENDPOINT,
 });
 
 const ENDPOINTS = Object.freeze(Object.values(TOKEN_BOT_ENDPOINTS));
@@ -69,6 +73,10 @@ function payloadFailure(endpoint, payload) {
     return validWorkspacePayload(payload)
       ? null : '请输入工作区绝对路径。';
   }
+  if (endpoint === TOKEN_BOT_ENDPOINTS.setModel) {
+    return validModelPayload(payload)
+      ? null : '请选择有效模型。';
+  }
   if (endpoint === TOKEN_BOT_ENDPOINTS.setAgentPreset) {
     return validAgentPresetPayload(payload)
       ? null : '请选择 Agent Preset。';
@@ -76,6 +84,10 @@ function payloadFailure(endpoint, payload) {
   if (endpoint === TOKEN_BOT_ENDPOINTS.setContextEnhancement) {
     return validContextEnhancementPayload(payload)
       ? null : '请提交有效的上下文增强设置。';
+  }
+  if (endpoint === TOKEN_BOT_ENDPOINTS.setAccessPolicy) {
+    return validAccessPolicyPayload(payload)
+      ? null : '请提交有效的访问设置。';
   }
   return 'Unknown bot endpoint.';
 }
@@ -158,9 +170,15 @@ export function createTokenBotRpcHandler(controller, { channel }) {
       } else if (endpoint === TOKEN_BOT_ENDPOINTS.setWorkspace) {
         if (typeof controller.updateWorkspace !== 'function') throw new Error('Workspace update is unavailable');
         value = await controller.updateWorkspace(payload.botId, payload.workspace);
+      } else if (endpoint === TOKEN_BOT_ENDPOINTS.setModel) {
+        if (typeof controller.updateModel !== 'function') throw new Error('Model update is unavailable');
+        value = await controller.updateModel(payload.botId, payload.model);
       } else if (endpoint === TOKEN_BOT_ENDPOINTS.setContextEnhancement) {
         if (typeof controller.updateContextEnhancement !== 'function') throw new Error('Context enhancement update is unavailable');
         value = await controller.updateContextEnhancement(payload.botId, payload.config);
+      } else if (endpoint === TOKEN_BOT_ENDPOINTS.setAccessPolicy) {
+        if (typeof controller.updateAccessPolicy !== 'function') throw new Error('Access policy update is unavailable');
+        value = await controller.updateAccessPolicy(payload.botId, payload.policy);
       } else if (endpoint === TOKEN_BOT_ENDPOINTS.setAgentPreset) {
         if (typeof controller.updateAgentPreset !== 'function') throw new Error('Agent preset update is unavailable');
         value = await controller.updateAgentPreset(payload.botId, payload.agentPreset);

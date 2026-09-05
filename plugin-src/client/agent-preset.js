@@ -6,6 +6,11 @@ export const SET_AGENT_PRESET_ENDPOINT = 'bot.preset.set';
 
 const PRESET_ID = /^[a-z0-9][a-z0-9-]*$/;
 
+// Safe default: abnormal selections fall back to `standard`, never `code`.
+// `code` is a legacy preset id that no longer ships with DSH.
+export const STANDARD_AGENT_PRESET_ID = 'standard';
+const LEGACY_AGENT_PRESET_FALLBACKS = Object.freeze({ code: STANDARD_AGENT_PRESET_ID });
+
 export const EMPTY_AGENT_PRESET_CATALOG = Object.freeze({
   defaultId: '',
   items: Object.freeze([]),
@@ -15,7 +20,8 @@ export const AgentPresetCatalogContext = React.createContext(EMPTY_AGENT_PRESET_
 
 export function normalizeAgentPresetId(value) {
   if (typeof value !== 'string') return '';
-  const id = value.trim();
+  const id = value.trim().toLowerCase();
+  if (Object.hasOwn(LEGACY_AGENT_PRESET_FALLBACKS, id)) return LEGACY_AGENT_PRESET_FALLBACKS[id];
   return PRESET_ID.test(id) ? id : '';
 }
 

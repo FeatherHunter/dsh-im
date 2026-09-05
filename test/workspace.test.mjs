@@ -6,6 +6,7 @@ import test from 'node:test';
 
 import {
   BotWorkspaceStore,
+  CURRENT_DOCUMENT_VERSION,
   createBotScopedHarness,
   createBotWorkspaceScope,
   createWorkspaceAwareController,
@@ -142,6 +143,75 @@ test('BotWorkspaceStore migrates v1 on the first delivery target and persists ta
   assert.equal(await reloaded.deleteDeliveryTarget('bot_delivery', 'daily-report'), true);
   assert.deepEqual(reloaded.listDeliveryTargets('bot_delivery'), []);
   assert.equal(JSON.parse(await readFile(path, 'utf8')).version, 2);
+});
+
+test('BotWorkspaceStore persists private Session sync in v3 without exposing or losing other bot settings', async (t) => {
+  const { path, defaultWorkspace } = await fixture(t);
+  const accessPolicy = {
+    direct: {
+      mode: 'open',
+      open: { defaultCanExecuteCommands: true, commandPermissionOverrides: [] },
+      allowlist: { users: [] },
+    },
+    group: {
+      mode: 'allowlist',
+      open: { defaultCanExecuteCommands: false, commandPermissionOverrides: [] },
+      allowlist: { users: [{ id: 'ops', canExecuteCommands: true }] },
+    },
+  };
+  const contextEnhancement = {
+    group: { enabled: true, fields: ['senderId', 'botId'], guidance: 'group guide' },
+    direct: { enabled: false, fields: ['senderId'], guidance: '' },
+  };
+  const store = await new BotWorkspaceStore(path, { defaultWorkspace }).load();
+  await store.ensure('bot_sync', {
+    defaultAgentPreset: 'coding-agent',
+    initialAccessPolicy: accessPolicy,
+  });
+  await store.setModel('bot_sync', { provider: 'deepseek', model: 'deepseek-v3' });
+  await store.setContextEnhancement('bot_sync', contextEnhancement);
+  await store.createDeliveryTarget('bot_sync', {
+    targetId: 'alice', name: 'Alice', kind: 'user', route: { openId: 'ou_alice' },
+  });
+
+  assert.equal(await store.setDeliveryTargetSessionSync('bot_sync', 'alice', 'p2p:ou_alice'), true);
+  let saved = JSON.parse(await readFile(path, 'utf8'));
+  assert.equal(saved.version, CURRENT_DOCUMENT_VERSION);
+  assert.equal(saved.agentPresets.bot_sync, 'coding-agent');
+  assert.deepEqual(saved.models.bot_sync, { provider: 'deepseek', model: 'deepseek-v3' });
+  assert.deepEqual(saved.contextEnhancement.bot_sync, contextEnhancement);
+  assert.deepEqual(saved.accessPolicies.bot_sync, accessPolicy);
+  assert.deepEqual(saved.deliveryTargets.bot_sync.alice.sessionSync, {
+    conversationKey: 'p2p:ou_alice',
+  });
+  assert.equal(JSON.stringify(store.deliveryTargetFor('bot_sync', 'alice')).includes('p2p:'), false);
+  assert.deepEqual(store.listSessionSyncTargets(), [{
+    botId: 'bot_sync', targetId: 'alice', conversationKey: 'p2p:ou_alice',
+  }]);
+
+  await store.updateDeliveryTarget('bot_sync', 'alice', {
+    name: 'Alice renamed', kind: 'user', route: { openId: 'ou_alice' },
+  });
+  saved = JSON.parse(await readFile(path, 'utf8'));
+  assert.equal(saved.version, CURRENT_DOCUMENT_VERSION);
+  assert.deepEqual(saved.deliveryTargets.bot_sync.alice.sessionSync, {
+    conversationKey: 'p2p:ou_alice',
+  });
+
+  await store.updateDeliveryTarget('bot_sync', 'alice', {
+    name: 'Someone else', kind: 'user', route: { openId: 'ou_other' },
+  });
+  saved = JSON.parse(await readFile(path, 'utf8'));
+  assert.equal(saved.version, CURRENT_DOCUMENT_VERSION);
+  assert.equal(saved.deliveryTargets.bot_sync.alice.sessionSync, undefined);
+  assert.deepEqual(store.listSessionSyncTargets(), []);
+
+  await store.setDeliveryTargetSessionSync('bot_sync', 'alice', 'p2p:ou_other');
+  assert.equal(await store.setDeliveryTargetSessionSync('bot_sync', 'alice', null), false);
+  saved = JSON.parse(await readFile(path, 'utf8'));
+  assert.equal(saved.version, CURRENT_DOCUMENT_VERSION);
+  assert.equal(saved.deliveryTargets.bot_sync.alice.sessionSync, undefined);
+  assert.deepEqual(saved.accessPolicies.bot_sync, accessPolicy);
 });
 
 test('BotWorkspaceStore keeps delivery targets bot-scoped and removes them with the bot', async (t) => {
@@ -940,10 +1010,15 @@ test('config-store removal observation retires workspaces after the config commi
   assert.equal(workspaces.has('bot_feishu'), false);
 });
 
-test('/workspace command preserves spaces and returns actionable validation messages', async (t) => {
-  const { alternateWorkspace } = await fixture(t);
+test('/workspace command supports fresh list numbers, preserves paths, and returns actionable errors', async (t) => {
+  const { defaultWorkspace, alternateWorkspace } = await fixture(t);
   const switched = [];
-  const harness = { async switchWorkspace(path) { switched.push(path); return path; } };
+  let listed = [alternateWorkspace];
+  const harness = {
+    currentWorkspace() { return defaultWorkspace; },
+    async listWorkspaces() { return listed; },
+    async switchWorkspace(path) { switched.push(path); return path; },
+  };
 
   assert.equal(await runWorkspaceCommand('hello', harness), null);
   assert.match((await runWorkspaceCommand('/workspace', harness)).message, /用法/);
@@ -951,7 +1026,14 @@ test('/workspace command preserves spaces and returns actionable validation mess
     (await runWorkspaceCommand(`/workspace ${alternateWorkspace}`, harness)).message,
     new RegExp(alternateWorkspace.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')),
   );
-  assert.deepEqual(switched, [alternateWorkspace]);
+  assert.match((await runWorkspaceCommand('/workspace 2', harness)).message, new RegExp(alternateWorkspace));
+  listed = [];
+  assert.match((await runWorkspaceCommand('/workspace 1', harness)).message, new RegExp(defaultWorkspace));
+  assert.match((await runWorkspaceCommand('/workspace 2', harness)).message, /workspacelist/);
+  assert.deepEqual(switched, [alternateWorkspace, alternateWorkspace, defaultWorkspace]);
+
+  assert.match((await runWorkspaceCommand(`/WS ${alternateWorkspace}`, harness)).message, new RegExp(alternateWorkspace));
+  assert.equal(await runWorkspaceCommand('/wsnope /tmp', harness), null);
 
   const invalidHarness = {
     async switchWorkspace() {
@@ -962,7 +1044,7 @@ test('/workspace command preserves spaces and returns actionable validation mess
   };
   const invalid = await runWorkspaceCommand('/workspace /missing/workspace', invalidHarness);
   assert.match(invalid.message, /路径不存在/);
-  assert.match(invalid.message, /用法：\/workspace 工作区绝对路径/);
+  assert.match(invalid.message, /用法：\/workspace 工作区序号或绝对路径/);
 
   const removedHarness = {
     async switchWorkspace() {
@@ -1004,13 +1086,19 @@ test('/workspacelist returns existing absolute paths with the current workspace 
   assert.ok(result.message.indexOf(defaultWorkspace) < result.message.indexOf(alternateWorkspace));
   assert.ok(result.message.indexOf(alternateWorkspace) < result.message.indexOf(thirdWorkspace));
   assert.doesNotMatch(result.message, /missing|relative\/path/);
-  assert.match(result.message, /切换用法：\/workspace 工作区绝对路径/);
+  assert.match(result.message, /切换用法：\/workspace 工作区序号或绝对路径/);
   assert.match(result.message, /查看会话：\/sessionlist 工作区序号或绝对路径/);
   assert.equal(result.messages.join(''), result.message);
   assert.equal(listCalls, 1);
 
+  for (const alias of ['/wsl', '/WORKSPACES']) {
+    assert.equal((await runWorkspaceCommand(`  ${alias}  `, harness)).message, result.message);
+  }
+  assert.match((await runWorkspaceCommand('/wsl extra', harness)).message, /用法/);
+  assert.equal(await runWorkspaceCommand('/workspacesnope', harness), null);
+
   assert.match((await runWorkspaceCommand('/workspacelist extra', harness)).message, /用法/);
-  assert.equal(listCalls, 1);
+  assert.equal(listCalls, 3);
   assert.match((await runWorkspaceCommand('/workspacelist', {})).message, /暂不支持/);
   assert.match((await runWorkspaceCommand('/workspacelist', {
     async listWorkspaces() { throw new Error('private host detail'); },
@@ -1138,6 +1226,51 @@ test('/sessionlist supports the current workspace, list numbers, and absolute pa
   assert.match(absolute.message, /该工作区暂无会话/);
   assert.deepEqual(listedWorkspaces, [defaultWorkspace, alternateWorkspace, thirdWorkspace]);
   assert.equal(workspaceListCalls, 1, 'only numeric selection needs the workspace registry order');
+});
+
+test('/sessionlist and /sessions accept a one-off --limit for the current workspace', async (t) => {
+  const { defaultWorkspace } = await fixture(t);
+  const sessions = Array.from({ length: 4 }, (_, index) => ({
+    sessionId: `limited-session-${index + 1}`,
+    title: `Limited Session ${index + 1}`,
+    archived: false,
+    summaryAvailable: true,
+  }));
+  let listCalls = 0;
+  const harness = {
+    currentWorkspace() { return defaultWorkspace; },
+    async listWorkspaceSessions(workspace) {
+      listCalls += 1;
+      return { workspace, sessions };
+    },
+  };
+
+  const limited = await runWorkspaceCommand('/sessionlist --limit 2', harness);
+  assert.match(limited.message, /会话（2）：/);
+  assert.match(limited.message, /limited-session-1/);
+  assert.match(limited.message, /limited-session-2/);
+  assert.doesNotMatch(limited.message, /limited-session-3|limited-session-4/);
+
+  const alias = await runWorkspaceCommand('/SESSIONS --LIMIT 1', harness);
+  assert.match(alias.message, /会话（1）：/);
+  assert.match(alias.message, /limited-session-1/);
+  assert.doesNotMatch(alias.message, /limited-session-2/);
+
+  const oversized = await runWorkspaceCommand('/sessionlist --limit 99', harness);
+  assert.match(oversized.message, /会话（4）：/);
+  assert.equal(listCalls, 3);
+
+  for (const command of [
+    '/sessionlist --limit',
+    '/sessionlist --limit 0',
+    '/sessionlist --limit -1',
+    '/sessionlist --limit many',
+    '/sessionlist --limit 2 1',
+  ]) {
+    const result = await runWorkspaceCommand(command, harness);
+    assert.match(result.message, /\/sessionlist --limit N/);
+  }
+  assert.equal(listCalls, 3, 'invalid limits must not query Harness');
 });
 
 test('/sessions reuses /sessionlist parsing for current, numbered, and absolute workspaces', async (t) => {
@@ -1323,6 +1456,7 @@ test('all nine channel bridge families advertise and fan out workspace command r
     const source = await readFile(new URL(file, import.meta.url), 'utf8');
     assert.match(source, /\/workspacelist  列出工作区绝对路径/);
     assert.match(source, /\/sessionlist 或 \/sessions \[工作区序号或绝对路径\]  列出会话 ID 和标题/);
+    assert.match(source, /\/sessionlist --limit N  仅列出当前工作区前 N 个会话/);
     assert.match(source, /workspaceCommand\.messages \?\? \[workspaceCommand\.message\]/);
   }
 });
@@ -1581,9 +1715,14 @@ test('BotWorkspaceStore rejects invalid agent preset ids and missing bots', asyn
   const store = await new BotWorkspaceStore(path, { defaultWorkspace }).load();
   await store.ensure('bot_one');
 
-  await assert.rejects(store.setAgentPreset('bot_one', 'Standard'), { code: 'agent-preset-invalid' });
+  // Preset ids are case-insensitive: `Standard` means `standard`.
+  await store.setAgentPreset('bot_one', 'Standard');
+  assert.equal(store.agentPresetFor('bot_one'), 'standard');
+  // Legacy `code` preset no longer ships: it falls back to `standard`, never `code`.
+  await store.setAgentPreset('bot_one', 'CODE');
+  assert.equal(store.agentPresetFor('bot_one'), 'standard');
+  await assert.rejects(store.setAgentPreset('bot_one', 'Bad Id!'), { code: 'agent-preset-invalid' });
   await assert.rejects(store.setAgentPreset('bot_missing', 'standard'), { code: 'workspace-bot-not-found' });
-  assert.equal(store.agentPresetFor('bot_one'), null);
 });
 
 test('changing a bot agent preset does not clear sessions', async (t) => {

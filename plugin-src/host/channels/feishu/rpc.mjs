@@ -5,21 +5,32 @@ import {
 } from '../../../../src/channels/shared/agent-preset.mjs';
 import { publicConnectionTestResult } from '../../../../src/channels/shared/connection-test.mjs';
 import { publicMessageFailure } from '../../../../src/channels/shared/message-failure.mjs';
+import {
+  normalizeModelCatalog,
+  normalizeModelSelection,
+} from '../../../../src/channels/shared/model-setting.mjs';
+import { normalizeAccessPolicy } from '../../../../src/channels/shared/access-policy.mjs';
 import { resolveRpcAuthority } from '../../rpc-authority.mjs';
 import { publicWorkspaceError, validWorkspacePayload } from '../shared/workspace-rpc.mjs';
 import { validAgentPresetPayload } from '../shared/agent-preset-rpc.mjs';
+import { validModelPayload } from '../shared/model-setting-rpc.mjs';
 import { validContextEnhancementPayload } from '../shared/context-enhancement-rpc.mjs';
+import { SET_ACCESS_POLICY_ENDPOINT, validAccessPolicyPayload } from '../shared/access-policy-rpc.mjs';
 import { normalizeContextEnhancementConfig } from '../../../../src/channels/shared/context-enhancement.mjs';
 import {
   isFeishuGroupResponseMode,
   normalizeFeishuGroupResponseMode,
 } from '../../../../src/channels/feishu/group-response-mode.mjs';
 import {
-  FEISHU_ENDPOINTS,
+  FEISHU_ENDPOINTS as FEISHU_CLIENT_ENDPOINTS,
   FEISHU_RPC_CHANNEL,
 } from '../../../client/channels/feishu/api.js';
 
-export { FEISHU_ENDPOINTS, FEISHU_RPC_CHANNEL };
+export const FEISHU_ENDPOINTS = Object.freeze({
+  ...FEISHU_CLIENT_ENDPOINTS,
+  setAccessPolicy: SET_ACCESS_POLICY_ENDPOINT,
+});
+export { FEISHU_RPC_CHANNEL };
 export const FEISHU_MULTI_ENDPOINTS = Object.freeze({
   reconnectBot: 'bot.reconnect',
   disconnectBot: 'bot.disconnect',
@@ -277,9 +288,12 @@ function publicBotEntry(entry) {
     state: connectionState(source, registration, connected),
     connected,
     configured: source.configured === true,
+    model: normalizeModelSelection(source.model),
     agentPreset: normalizeAgentPresetId(source.agentPreset),
     contextEnhancement: normalizeContextEnhancementConfig(source.contextEnhancement),
+    accessPolicy: normalizeAccessPolicy(source.accessPolicy),
     groupResponseMode: normalizeFeishuGroupResponseMode(source.groupResponseMode),
+    groupTopicReply: source.groupTopicReply === true,
     groupMessagePermissionGranted: source.groupMessagePermissionGranted === true,
     bot: publicBot(source.bot),
     health: publicHealth(source, connected),
@@ -325,6 +339,7 @@ export async function toPublicFeishuStatus(status, { encodeQr = qrCodeDataUrl } 
     health: publicHealth(source, connected),
     bots,
     agentPresetCatalog: normalizeAgentPresetCatalog(source.agentPresetCatalog),
+    modelCatalog: normalizeModelCatalog(source.modelCatalog),
     totals: {
       configured: bots.length || (source.configured === true ? 1 : 0),
       connected: bots.length ? bots.filter((bot) => bot.connected).length : (connected ? 1 : 0),
@@ -414,6 +429,9 @@ function validPayload(endpoint, payload) {
     return validWorkspacePayload(payload)
       ? null : '请输入工作区绝对路径。';
   }
+  if (endpoint === FEISHU_ENDPOINTS.setModel) {
+    return validModelPayload(payload) ? null : '请选择有效模型。';
+  }
   if (endpoint === FEISHU_ENDPOINTS.setAgentPreset) {
     return validAgentPresetPayload(payload)
       ? null : '请选择 Agent Preset。';
@@ -422,12 +440,23 @@ function validPayload(endpoint, payload) {
     return validContextEnhancementPayload(payload)
       ? null : '请提交有效的上下文增强设置。';
   }
+  if (endpoint === FEISHU_ENDPOINTS.setAccessPolicy) {
+    return validAccessPolicyPayload(payload)
+      ? null : '请提交有效的访问设置。';
+  }
   if (endpoint === FEISHU_ENDPOINTS.setGroupResponseMode) {
     return hasOnlyKeys(payload, new Set(['botId', 'groupResponseMode']))
       && safeOpaqueId(payload.botId)
       && isFeishuGroupResponseMode(payload.groupResponseMode)
       ? null
       : '请选择群聊响应方式。';
+  }
+  if (endpoint === FEISHU_ENDPOINTS.setGroupTopicReply) {
+    return hasOnlyKeys(payload, new Set(['botId', 'groupTopicReply']))
+      && safeOpaqueId(payload.botId)
+      && typeof payload.groupTopicReply === 'boolean'
+      ? null
+      : '请选择是否以话题方式回复。';
   }
   return 'Unknown Feishu endpoint.';
 }
@@ -673,10 +702,22 @@ export function createFeishuRpcHandler(controller, { encodeQr = qrCodeDataUrl } 
           await controller.updateWorkspace(payload.botId, payload.workspace),
           { encodeQr: cachedEncodeQr },
         );
+      } else if (endpoint === FEISHU_ENDPOINTS.setModel) {
+        if (typeof controller.updateModel !== 'function') throw new Error('Model update is unavailable');
+        value = await toPublicFeishuStatus(
+          await controller.updateModel(payload.botId, payload.model),
+          { encodeQr: cachedEncodeQr },
+        );
       } else if (endpoint === FEISHU_ENDPOINTS.setContextEnhancement) {
         if (typeof controller.updateContextEnhancement !== 'function') throw new Error('Context enhancement update is unavailable');
         value = await controller.updateContextEnhancement(
           payload.botId, payload.config,
+          (status) => toPublicFeishuStatus(status, { encodeQr: cachedEncodeQr }),
+        );
+      } else if (endpoint === FEISHU_ENDPOINTS.setAccessPolicy) {
+        if (typeof controller.updateAccessPolicy !== 'function') throw new Error('Access policy update is unavailable');
+        value = await controller.updateAccessPolicy(
+          payload.botId, payload.policy,
           (status) => toPublicFeishuStatus(status, { encodeQr: cachedEncodeQr }),
         );
       } else if (endpoint === FEISHU_ENDPOINTS.setAgentPreset) {
@@ -691,6 +732,14 @@ export function createFeishuRpcHandler(controller, { encodeQr = qrCodeDataUrl } 
         }
         value = await toPublicFeishuStatus(
           await controller.updateGroupResponseMode(payload.botId, payload.groupResponseMode),
+          { encodeQr: cachedEncodeQr },
+        );
+      } else if (endpoint === FEISHU_ENDPOINTS.setGroupTopicReply) {
+        if (typeof controller.updateGroupTopicReply !== 'function') {
+          throw new Error('Group topic reply update is unavailable');
+        }
+        value = await toPublicFeishuStatus(
+          await controller.updateGroupTopicReply(payload.botId, payload.groupTopicReply),
           { encodeQr: cachedEncodeQr },
         );
       } else {

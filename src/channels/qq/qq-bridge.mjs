@@ -33,7 +33,6 @@ import {
   hasInboundImages,
   imagePromptDiagnostic,
   imagePromptUserMessage,
-  promptContentForMessage,
 } from '../shared/image-prompt.mjs';
 import {
   hasInboundFiles,
@@ -45,6 +44,10 @@ import {
 } from '../shared/semantic/artifact.mjs';
 import { deliverOutboundArtifacts } from '../shared/semantic/artifact-delivery.mjs';
 import {
+  hasReplyReference,
+  promptContentForInboundMessage,
+} from '../shared/semantic/reply-reference.mjs';
+import {
   createDeliveryReceipt,
   providerMessageIdsFor,
 } from '../shared/semantic/delivery.mjs';
@@ -54,6 +57,10 @@ import {
   messageFailureText,
   setLastMessageFailure,
 } from '../shared/message-failure.mjs';
+import {
+  COMMAND_PERMISSION_DENIED_MESSAGE,
+  evaluateInboundAccess,
+} from '../shared/inbound-access.mjs';
 import { sendMarkdownReply } from './markdown-reply.mjs';
 import { t } from '../shared/i18n.mjs';
 
@@ -81,9 +88,11 @@ function helpText() {
     t('/new  开启一个全新会话'),
     t('/compact  压缩当前会话的较早上下文'),
     t('/history [数量]  查看最近历史消息（默认 3 条，最多 5 条）'),
-    t('/workspace 工作区绝对路径  切换工作区'),
+    t('/workspace 工作区序号或绝对路径  切换工作区'),
     t('/workspacelist  列出工作区绝对路径'),
+    t('/ws、/wsl、/workspaces  工作区命令别名'),
     t('/sessionlist 或 /sessions [工作区序号或绝对路径]  列出会话 ID 和标题'),
+    t('/sessionlist --limit N  仅列出当前工作区前 N 个会话'),
     t('/session Session ID 或当前工作区序号  将当前聊天绑定到指定会话'),
     t('/models  按序号列出所有可用模型'),
     t('/reasoninglist 或 /reasonings  按序号列出当前模型可用推理等级'),
@@ -110,9 +119,6 @@ function conversationKey(message) {
 }
 
 function senderAllowed(message, ownerUserOpenid) {
-  // QR binding yields a C2C user_openid, while group events identify senders
-  // with a group-scoped member_openid. Treat group membership plus @mention as
-  // the access boundary, and keep the scanner restriction for private chats.
   return message?.kind === 'group'
     || ownerUserOpenid === '*'
     || message?.senderId === ownerUserOpenid;
@@ -142,6 +148,37 @@ function hasQqImageAttachments(message) {
 function hasQqFileAttachments(message) {
   return Array.isArray(message?.attachments)
     && message.attachments.some((attachment) => !isQqImageAttachment(attachment));
+}
+
+function qqAttachmentKind(attachment) {
+  const mediaType = attachmentMediaType(attachment);
+  if (mediaType?.startsWith('image/')) return 'image';
+  if (mediaType?.startsWith('audio/')) return 'audio';
+  if (mediaType?.startsWith('video/')) return 'video';
+  return 'file';
+}
+
+function qqReplyReference(message) {
+  const refMsgIdx = nonEmptyString(message?.refMsgIdx);
+  if (!refMsgIdx) return null;
+  const element = Array.isArray(message?.msgElements) ? message.msgElements[0] : null;
+  const sourceAttachments = Array.isArray(element?.attachments) ? element.attachments : [];
+  const attachments = sourceAttachments.map((attachment) => {
+    const name = nonEmptyString(attachment?.filename);
+    return { kind: qqAttachmentKind(attachment), ...(name ? { name } : {}) };
+  });
+  const asrText = sourceAttachments
+    .filter((attachment) => qqAttachmentKind(attachment) === 'audio')
+    .map((attachment) => nonEmptyString(attachment?.asr_refer_text))
+    .filter(Boolean)
+    .join('\n');
+  const content = asrText || nonEmptyString(element?.content);
+  return {
+    messageId: refMsgIdx,
+    ...(content ? { content } : {}),
+    ...(attachments.length > 0 ? { attachments } : {}),
+    ...(!content && attachments.length === 0 ? { unavailableReason: 'not-delivered' } : {}),
+  };
 }
 
 async function fetchQqFileBuffer(url, { fetchImpl, signal }) {
@@ -195,7 +232,13 @@ export function qqInboundMessage(message, { fetchImpl = fetch } = {}) {
       },
     });
   }
-  return { content: safeText(message), images, files };
+  const replyTo = qqReplyReference(message);
+  return {
+    content: safeText(message),
+    images,
+    files,
+    ...(replyTo ? { replyTo } : {}),
+  };
 }
 
 function nonEmptyString(value) {
@@ -376,6 +419,7 @@ export class QqHarnessBridge {
   #harness;
   #state;
   #contextEnhancement;
+  #accessPolicy;
   #status;
   #logger;
   #replyTimeoutMs;
@@ -398,6 +442,7 @@ export class QqHarnessBridge {
     harness,
     state,
     contextEnhancement,
+    accessPolicy,
     status = createQqBridgeStatus(),
     logger = console,
     replyTimeoutMs = 600_000,
@@ -417,6 +462,7 @@ export class QqHarnessBridge {
     this.#harness = harness;
     this.#state = state;
     this.#contextEnhancement = contextEnhancement;
+    this.#accessPolicy = accessPolicy;
     this.#status = status;
     this.#logger = logger;
     this.#replyTimeoutMs = replyTimeoutMs;
@@ -439,6 +485,26 @@ export class QqHarnessBridge {
       || this.#state.hasSeen(messageId)
       || this.#acceptedMessageIds.has(messageId)) return Promise.resolve();
     const key = conversationKey(message);
+    const addressed = message.kind !== 'group'
+      || message.rawEventType === 'GROUP_AT_MESSAGE_CREATE';
+    const commandText = safeText(message);
+    if (addressed) {
+      const access = this.#accessPolicy
+        ? evaluateInboundAccess(this.#accessPolicy, {
+            conversationType: message.kind === 'c2c' ? 'direct' : 'group',
+            senderIds: sender,
+            text: commandText,
+            hasImages: hasQqImageAttachments(message),
+            hasFiles: hasQqFileAttachments(message),
+          })
+        : senderAllowed(message, this.#ownerUserOpenid)
+          ? { allowed: true, reason: 'legacy-owner' }
+          : { allowed: false, reason: 'sender-not-allowed' };
+      if (!access.allowed) {
+        this.#acceptedMessageIds.set(messageId, null);
+        return this.#finishAccessDecision(message, messageId, access);
+      }
+    }
     this.#acceptedMessageIds.set(messageId, captureContextEnhancement(
       this.#contextEnhancement,
       message.kind === 'c2c' ? 'direct' : 'group',
@@ -450,20 +516,16 @@ export class QqHarnessBridge {
       rememberConnectionTestTarget(this.#state, message.replyTarget);
     }
     const pending = this.#pendingInteractions.get(key);
-    const commandText = safeText(message);
-    const allowed = senderAllowed(message, this.#ownerUserOpenid);
-    const addressed = message.kind !== 'group'
-      || message.rawEventType === 'GROUP_AT_MESSAGE_CREATE';
     const batchCommand = isBatchInputCommand(commandText);
     const batchStatus = this.#batchInputs.status(key);
-    if (batchCommand && allowed && addressed && message.kind === 'group') {
+    if (batchCommand && addressed && message.kind === 'group') {
       return this.#finishBatchResult(
         message,
         messageId,
         { message: batchInputGroupUnsupportedMessage() },
       );
     }
-    if (allowed && message.kind === 'c2c'
+    if (message.kind === 'c2c'
       && (batchCommand || batchStatus.phase === 'collecting')) {
       const exactBatchStart = /^\/batch$/iu.test(commandText);
       const result = exactBatchStart
@@ -473,7 +535,8 @@ export class QqHarnessBridge {
         : this.#batchInputs.handle(key, commandText, {
             plainText: Boolean(commandText)
               && !hasQqImageAttachments(message)
-              && !hasQqFileAttachments(message),
+              && !hasQqFileAttachments(message)
+              && !qqReplyReference(message),
           });
       if (result.handled) {
         if (result.kind === 'submit') {
@@ -493,7 +556,7 @@ export class QqHarnessBridge {
       : (isModelCommand(commandText)
           ? runModelCommand
           : (isPresetCommand(commandText) ? runPresetCommand : null));
-    if (commandRunner && allowed && addressed) {
+    if (commandRunner && addressed) {
       let task;
       task = this.#processFastCommand(
         message,
@@ -578,10 +641,9 @@ export class QqHarnessBridge {
     alreadyRecorded = false,
     batchSubmission = null,
   } = {}) {
-    const allowed = senderAllowed(message, this.#ownerUserOpenid);
     const addressed = message.kind !== 'group'
       || message.rawEventType === 'GROUP_AT_MESSAGE_CREATE';
-    const preparedMessage = allowed && addressed
+    const preparedMessage = addressed
       ? prefetchInboundFiles(
           qqInboundMessage(message, { fetchImpl: this.#fetchImpl }),
           { signal: this.#signal },
@@ -668,6 +730,34 @@ export class QqHarnessBridge {
     return task;
   }
 
+  #finishAccessDecision(message, messageId, access) {
+    let task;
+    task = Promise.resolve().then(async () => {
+      if (this.#state.hasSeen(messageId)) return;
+      await this.#state.markSeen(messageId);
+      if (access.reason === 'command-not-allowed') {
+        this.#status.messagesReceived += 1;
+        this.#status.lastMessageAt = new Date().toISOString();
+        await this.#bot.sendText(message.replyTarget, t(COMMAND_PERMISSION_DENIED_MESSAGE));
+        this.#status.messagesReplied += 1;
+        this.#status.lastReplyAt = new Date().toISOString();
+      } else {
+        this.#status.messagesRejected += 1;
+        this.#status.lastRejectedAt = new Date().toISOString();
+      }
+      this.#status.lastError = null;
+    }).catch((error) => {
+      if (this.#signal?.aborted) return;
+      this.#status.lastError = error?.message ?? String(error);
+      this.#logger.error?.('[dsh-im:qq] failed to apply inbound access policy:', error);
+    }).finally(() => {
+      this.#acceptedMessageIds.delete(messageId);
+      this.#commandTasks.delete(task);
+    });
+    this.#commandTasks.add(task);
+    return task;
+  }
+
   async #deliverArtifacts(target, replyTo, artifacts = [], baseReceipt = null) {
     if (artifacts.length === 0) {
       return { receipt: baseReceipt, failureNoticeVisible: false, artifactSendErrors: 0 };
@@ -730,11 +820,6 @@ export class QqHarnessBridge {
       await this.#state.markSeen(messageId);
       messageRecorded = true;
     };
-    if (!senderAllowed(message, this.#ownerUserOpenid)) {
-      this.#status.messagesRejected += 1;
-      this.#status.lastRejectedAt = new Date().toISOString();
-      return;
-    }
     if (message.kind === 'group' && message.rawEventType !== 'GROUP_AT_MESSAGE_CREATE') return;
 
     const target = message.replyTarget;
@@ -743,10 +828,11 @@ export class QqHarnessBridge {
     const text = promptMessage.content;
     const hasImages = hasInboundImages(promptMessage);
     const hasFiles = hasInboundFiles(promptMessage);
+    const hasReply = hasReplyReference(promptMessage);
     let stream = null;
     let batchSettled = batchSubmission === null;
     try {
-      if (!text && !hasImages && !hasFiles) {
+      if (!text && !hasImages && !hasFiles && !hasReply) {
         await this.#bot.sendText(target, t('目前支持文字、图片和文件消息。'));
         await markMessageSeen();
         return;
@@ -794,16 +880,20 @@ export class QqHarnessBridge {
         return;
       }
 
-      let content = hasImages
-        ? await promptContentForMessage(promptMessage, { signal: this.#signal })
+      let content = hasImages || hasReply
+        ? await promptContentForInboundMessage(promptMessage, { signal: this.#signal })
         : undefined;
       const snapshot = this.#acceptedMessageIds.get(messageId);
+      let contextEnhanced = false;
       if (snapshot) {
-        content = enhanceContextContent(content ?? text, snapshot, () => ({
+        const originalContent = content ?? text;
+        content = enhanceContextContent(originalContent, snapshot, () => ({
           channel: 'qq',
           senderId: sender,
           senderName: message.kind === 'group' ? message.senderName : undefined,
+          chatId: message.kind === 'group' ? message.groupOpenid : message.senderId,
         }));
+        contextEnhanced = content !== originalContent;
       }
       // QQ stream_messages can acknowledge a final frame without rendering it in
       // some C2C clients. Standard Markdown delivery is the reliable reply path.
@@ -818,7 +908,9 @@ export class QqHarnessBridge {
           harness: this.#harness,
           state: this.#state,
           key,
-          ...(content !== undefined ? { content } : { text }),
+          text,
+          content,
+          contextEnhanced,
           createOptions: { signal: this.#signal },
           existsOptions: { signal: this.#signal },
           askOptions: {

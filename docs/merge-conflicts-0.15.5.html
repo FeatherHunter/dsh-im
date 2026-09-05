@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>private/custom 合入上游 4.11.0 —— 6 处动脑冲突评审</title>
+<style>
+  :root { --bg:#0f1419; --panel:#1a222c; --line:#2c3a48; --txt:#d7e0ea; --dim:#8fa0b3;
+    --priv:#e6a23c; --up:#4aa8ff; --ok:#3fb950; --head:#f47067; }
+  * { box-sizing:border-box; }
+  body { background:var(--bg); color:var(--txt); font:14px/1.7 -apple-system,"PingFang SC","Microsoft YaHei",sans-serif;
+    max-width:1060px; margin:0 auto; padding:32px 22px 80px; }
+  h1 { font-size:22px; margin:0 0 4px; }
+  .sub { color:var(--dim); margin-bottom:22px; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:18px 20px; margin:16px 0; }
+  .card h2 { font-size:17px; margin:0 0 2px; }
+  .file { font-family:Consolas,monospace; font-size:12.5px; color:#9fd0ff; }
+  .meta { color:var(--dim); font-size:12.5px; margin:6px 0 10px; }
+  .cols { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+  .side { border:1px solid var(--line); border-radius:8px; padding:10px 12px; font-size:13px; }
+  .side.priv h3 { color:var(--priv); } .side.up h3 { color:var(--up); }
+  .side h3 { font-size:13px; margin:0 0 6px; }
+  .verdict { border-left:3px solid var(--ok); padding:8px 12px; background:#12241a; border-radius:0 8px 8px 0; margin-top:10px; }
+  .verdict b { color:var(--ok); }
+  .warn { border-left:3px solid var(--head); padding:8px 12px; background:#2a1518; border-radius:0 8px 8px 0; margin-top:10px; }
+  table { width:100%; border-collapse:collapse; font-size:13px; margin-top:8px; }
+  th,td { border:1px solid var(--line); padding:7px 10px; text-align:left; vertical-align:top; }
+  th { background:#222e3b; }
+  code { font-family:Consolas,monospace; font-size:12.5px; background:#0b1016; padding:1px 6px; border-radius:4px; }
+  .toc a { color:#9fd0ff; text-decoration:none; }
+  .foot { color:var(--dim); font-size:12.5px; margin-top:26px; }
+</style>
+</head>
+<body>
+<h1>private/custom 合入上游 4.11.0 —— 6 处动脑冲突评审</h1>
+<div class="sub">基线 <code>a0845a7</code>（v4.2.1）→ 上游 <code>1fa86ed</code>（v4.11.0，86 commits）→ 私版 <code>0.15.5</code>。
+试合冲突 14 文件：8 处机械处理（文档拼增量、lock 取名、私身份保留、<code>lib/</code> 重 build），下面 6 文件（7 块）需动脑，已全部处理并经测试验证。</div>
+
+<div class="card toc"><b>目录</b><br>
+1. bridge.mjs ＃1 —— 入站诊断日志位置（重声明风险）<br>
+2. bridge.mjs ＃2 —— 私改媒体方法块＋上游 replyTo 签名<br>
+3. message-utils.mjs —— standalone 类型覆盖＋引用回复并集<br>
+4. 三渠道 bridge 测试 —— import 各加各（并集）<br>
+5. inbound-file.test —— turn- vs 时间戳目录命名<br>
+附：8 处机械处理＋验证数据</div>
+
+<div class="card" id="c1">
+<h2>1. <span class="file">src/channels/feishu/bridge.mjs</span> ＃1 —— 诊断日志放哪</h2>
+<div class="meta">位置：处理 reaction 之后、batch 分支之前 ｜ 块数：1 ｜ 风险：<b>高（放错会 const 重声明直接炸）</b></div>
+<div class="cols">
+<div class="side priv"><h3>私改 HEAD</h3>
+<code>extractInboundMessage</code> 之后打 <code>[dsh-feishu] extracted</code> 诊断日志（message_id / type / hasImages / text_length / image_count），移动端 payload 出问题时留痕。并在此处声明 <code>commandMessage / commandText</code>。</div>
+<div class="side up"><h3>上游 main</h3>
+4.3–4.11 把入站解析<strong>前移</strong>到权限评估阶段（约 736 行），此处改为 batch 专用 <code>extractText</code> 流程；<code>commandMessage</code> 已在上游新位置声明。</div>
+</div>
+<div class="verdict"><b>决议：取上游结构，日志移植。</b>冲突点取上游空侧（删私改旧块），把 <code>extracted</code> 日志搬到上游新位置 <code>hasFiles</code> 之后，用已存在的变量——诊断能力保留，零重复声明。飞书 bridge 测试全绿即证据（日志行在测试输出中可见）。</div>
+</div>
+
+<div class="card" id="c2">
+<h2>2. <span class="file">src/channels/feishu/bridge.mjs</span> ＃2 —— 媒体方法块 vs replyTo</h2>
+<div class="meta">位置：<code>#sendAnswerText</code> 之前 ｜ 块数：1（约 125 行私改块）</div>
+<div class="cols">
+<div class="side priv"><h3>私改 HEAD</h3>
+5 个私有方法（extractAnswerMedia / sendAttachmentFile / getAllowedRoots / sendAttachments / sendMediaAttachments：media 标签剥离＋快照兜底），调用处全部带 replyTo；<code>#sendAnswerText</code> 签名无 <code>replyTo</code>。</div>
+<div class="side up"><h3>上游 main</h3>
+无对应方法块（上游附件回退走共享 inbound-file，飞书 bridge 无等价物）；<code>#sendAnswerText</code> 多了 <code>replyTo = null</code>（引用回复特性），3 处调用方传参。</div>
+</div>
+<div class="verdict"><b>决议：私改块整体保留 ＋ 采用上游签名。</b>上游无等价能力，不存在“被取代”问题；签名加 <code>replyTo = null</code> 后两侧调用方同时成立。</div>
+</div>
+
+<div class="card" id="c3">
+<h2>3. <span class="file">src/channels/feishu/message-utils.mjs</span> —— 解析能力并集</h2>
+<div class="meta">位置：<code>extractInboundMessage</code> 内 ｜ 块数：1 ｜ 性质：<b>互补，非互斥</b></div>
+<div class="cols">
+<div class="side priv"><h3>私改 HEAD</h3>
+image/file/media 三类型 standalone 识别、camelCase key 变体、media 封面退化 post、key/type 归一、图片扩展名判分流。</div>
+<div class="side up"><h3>上游 main</h3>
+仅 image 类型 snake_case image_key；但多了 <code>feishuReplyReference</code> → 返回体引用回复展开（引用回复特性）。</div>
+</div>
+<div class="verdict"><b>决议：取并集。</b>保留私改全部分流逻辑，末尾追加上游 replyTo 两行。前提已核实：<code>feishuImageSource</code> 接受 key-or-object，<code>feishuReplyReference</code> 定义存在。相关测试全绿。</div>
+</div>
+
+<div class="card" id="c4">
+<h2>4. 三渠道 bridge 测试 —— import 冲突（dingtalk / qq / weixin）</h2>
+<div class="meta">位置：各文件头部 import 区 ｜ 块数：各 1 ｜ 性质：纯叠加</div>
+<div class="cols">
+<div class="side priv"><h3>私改 HEAD（＃27）</h3>defaultImagePrompt 导入（image-prompt）。</div>
+<div class="side up"><h3>上游 main</h3>access-policy-fixture 导入（COMMAND_PERMISSION_DENIED_MESSAGE / directAccessPolicy）。</div>
+</div>
+<div class="verdict"><b>决议：两个 import 都保留。</b>前提已核实：合并后仍导出 defaultImagePrompt，fixture 为上游新增。三文件测试全绿（各 40+ 用例）。</div>
+</div>
+
+<div class="card" id="c5">
+<h2>5. <span class="file">test/inbound-file.test.mjs</span> —— 暂存目录命名代际</h2>
+<div class="meta">位置：141 行断言 ｜ 块数：1 ｜ 性质：<b>私改已被上游取代，以上游为准</b></div>
+<div class="cols">
+<div class="side priv"><h3>私改 HEAD</h3>断言 turn- 前缀命名。</div>
+<div class="side up"><h3>上游 main</h3>断言时间戳命名；且合并后源码注释明写 turn- 为 legacy。</div>
+</div>
+<div class="verdict"><b>决议：取上游正则。</b>源码是裁判：实现已是时间戳方案。另保留私改一处增量——Windows 反斜杠归一化，否则该断言在 Windows 必红（已实测红一次）。现全绿。</div>
+<div class="warn"><b>连带发现：</b>历史 turn- 目录上游 TTL 清扫明确跳过、需手动删除；CHANGELOG 0.15.5 已注明。</div>
+</div>
+
+<div class="card" id="mech">
+<h2>附：8 处机械处理＋验证</h2>
+<table>
+<tr><th>文件</th><th>处理</th></tr>
+<tr><td><code>package.json</code>（4 块）</td><td>保留私身份（包名／作者／fork 主页）；contributors 并集（xmanrui、C3H3-AI、divingleee、Chan-0312）；<b>版本 0.15.4 → 0.15.5</b>；dependencies 并集（含私改 sharp）。</td></tr>
+<tr><td><code>package-lock.json</code>（2 块）</td><td>仅 name/version 两处，同步私名＋0.15.5。</td></tr>
+<tr><td><code>CHANGELOG.md</code>（1 块）</td><td>顶部新增 0.15.5 条目，保留私版与上游全部条目。</td></tr>
+<tr><td><code>CONTEXT.md</code>（1 块）</td><td>上游两术语归入第 7 节，私版第 8 节保留。</td></tr>
+<tr><td><code>README.md</code>（4 块）／<code>README.en.md</code>（3 块）</td><td>全部取并集。</td></tr>
+<tr><td><code>lib/</code> 两文件</td><td>不解冲突，<code>npm run build</code> 重生成覆盖（身份 0.15.5 已确认）。</td></tr>
+</table>
+<div class="verdict"><b>验证：</b>7 个相关文件 263 用例 259 通过；3 失败＋1 跳过均为 Windows 预存环境问题（纯净 main 同样复现）。飞书 bridge／message-utils／plugin-host／attachment-parser／mobile-repro 中除 1 个 preset 大小写夹具外全绿，该夹具已同步更新后全绿。另：preset 大小写不敏感＋code→standard 兜底已同步移植进本次合并。</div>
+</div>
+
+<div class="foot">生成于合并提交前（private/custom ← main@1fa86ed）。main 分支保持干净镜像未动。</div>
+</body>
+</html>

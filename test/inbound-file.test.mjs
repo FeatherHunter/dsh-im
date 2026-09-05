@@ -148,7 +148,9 @@ test('stageInboundFiles keeps display names but makes traversal-like storage nam
   }, { workspace: root });
 
   assert.equal(staged.files[0].name, 'report:?*.txt');
-  assert.match(staged.files[0].path.replace(/\\/g, '/'), /^\.dsh-im\/inbound\/turn-[^/]+\/01-report___\.txt$/);
+  // Upstream (v4.x) stages into timestamped dirs; private `turn-` names are legacy.
+  // Keep the private backslash normalization so the assertion holds on Windows.
+  assert.match(staged.files[0].path.replace(/\\/g, '/'), /^\.dsh-im\/inbound\/\d{8}-\d{6}-[^/]+\/01-report___\.txt$/);
   assert.equal(await readFile(absoluteStagedPath(root, staged.files[0]), 'utf8'), 'safe');
   await staged.cleanup();
 });

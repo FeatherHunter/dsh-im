@@ -3,6 +3,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import {
   areJidsSameUser,
   downloadMediaMessage,
+  jidDecode,
   normalizeMessageContent,
 } from '@whiskeysockets/baileys';
 
@@ -13,7 +14,6 @@ import { trackOutboundArtifactProviderPromise } from '../shared/semantic/artifac
 import { createWhatsappBridgeStatus, WhatsappHarnessBridge } from './whatsapp-bridge.mjs';
 import {
   WHATSAPP_ACCESS_MODES,
-  normalizeWhatsappAccessPolicy,
 } from './config-store.mjs';
 import { createWhatsappWebSession } from './whatsapp-web-session.mjs';
 
@@ -37,6 +37,36 @@ const VIEW_ONCE_WRAPPER_KEYS = new Set([
   'viewOnceMessageV2',
   'viewOnceMessageV2Extension',
 ]);
+const WHATSAPP_ACCESS_POLICY_USER_SERVERS = new Set([
+  's.whatsapp.net',
+  'c.us',
+  'lid',
+  'hosted',
+  'hosted.lid',
+]);
+
+function normalizeWhatsappAccessPolicyId(value) {
+  if (typeof value !== 'string') return null;
+  const candidate = value.trim();
+  if (/^\+?\d+$/.test(candidate)) {
+    return `${candidate.replace(/^\+/, '')}@s.whatsapp.net`;
+  }
+  const decoded = jidDecode(candidate);
+  if (!decoded || !/^\d+$/.test(decoded.user)
+    || !WHATSAPP_ACCESS_POLICY_USER_SERVERS.has(decoded.server)) return null;
+  return candidate;
+}
+
+export function whatsappAccessPolicyIdsEqual(left, right) {
+  const normalizedLeft = normalizeWhatsappAccessPolicyId(left);
+  const normalizedRight = normalizeWhatsappAccessPolicyId(right);
+  if (!normalizedLeft || !normalizedRight) return false;
+  try {
+    return areJidsSameUser(normalizedLeft, normalizedRight) === true;
+  } catch {
+    return false;
+  }
+}
 
 function hasViewOnceWrapper(content) {
   let current = content;
@@ -64,6 +94,60 @@ function messageText(content) {
     ?? content?.videoMessage?.caption
     ?? content?.documentMessage?.caption
     ?? '';
+}
+
+function whatsappReplyAttachment(kind, media, fallbackName) {
+  if (!media || typeof media !== 'object') return null;
+  const name = typeof media.fileName === 'string' && media.fileName
+    ? media.fileName : typeof fallbackName === 'string' && fallbackName
+      ? fallbackName : undefined;
+  return { kind, ...(name ? { name } : {}) };
+}
+
+function whatsappReplyAttachments(content) {
+  const attachments = [];
+  if (content?.imageMessage) {
+    attachments.push(whatsappReplyAttachment('image', content.imageMessage));
+  }
+  if (content?.documentMessage) {
+    const mediaType = typeof content.documentMessage.mimetype === 'string'
+      ? content.documentMessage.mimetype.toLowerCase() : '';
+    attachments.push(whatsappReplyAttachment(
+      mediaType.startsWith('image/') ? 'image' : 'file',
+      content.documentMessage,
+    ));
+  }
+  if (content?.audioMessage) {
+    attachments.push(whatsappReplyAttachment('audio', content.audioMessage));
+  }
+  if (content?.videoMessage) {
+    attachments.push(whatsappReplyAttachment('video', content.videoMessage));
+  }
+  if (content?.stickerMessage) {
+    const mediaType = typeof content.stickerMessage.mimetype === 'string'
+      ? content.stickerMessage.mimetype.toLowerCase() : '';
+    attachments.push(whatsappReplyAttachment(
+      mediaType.startsWith('video/') || content.stickerMessage.isAnimated === true
+        ? 'video' : 'image',
+      content.stickerMessage,
+    ));
+  }
+  return attachments.filter(Boolean);
+}
+
+function whatsappReplyReference(context) {
+  if (!context?.quotedMessage || typeof context.quotedMessage !== 'object') return undefined;
+  const content = normalizeMessageContent(context.quotedMessage);
+  const messageId = typeof context.stanzaId === 'string' && context.stanzaId
+    ? context.stanzaId : undefined;
+  const authorId = typeof context.participant === 'string' && context.participant
+    ? context.participant : undefined;
+  return {
+    ...(messageId ? { messageId } : {}),
+    ...(authorId ? { authorId } : {}),
+    content: messageText(content),
+    attachments: whatsappReplyAttachments(content),
+  };
 }
 
 function mediaSize(value) {
@@ -230,6 +314,7 @@ export function normalizeWhatsappMessage(message, accountJid, {
     && areJidsSameUser(context.participant, accountJid);
   const image = whatsappImageSource(message, content, download, { viewOnce });
   const file = whatsappFileSource(message, content, download);
+  const replyTo = whatsappReplyReference(context);
   return {
     messageId: `${remoteJid}:${messageId}`,
     providerMessageId: messageId,
@@ -244,6 +329,7 @@ export function normalizeWhatsappMessage(message, accountJid, {
       || typeof content?.extendedTextMessage?.text === 'string',
     images: image ? [image] : [],
     files: file ? [file] : [],
+    ...(replyTo ? { replyTo } : {}),
     addressed: !group || fromMe || mentioned || replyToSelf,
     selfChat,
     replyTarget: { jid: remoteJid, quoted: message, selfChat },
@@ -538,12 +624,11 @@ export class WhatsappRuntime {
   #harness;
   #state;
   #contextEnhancement;
+  #accessPolicy;
   #logger;
   #replyTimeoutMs;
   #connectTimeoutMs;
   #mediaUploadTimeoutMs;
-  #accessMode;
-  #allowedPrivateNumbers;
   #createSession;
   #status = createWhatsappRuntimeStatus();
   #abortController = null;
@@ -558,6 +643,7 @@ export class WhatsappRuntime {
     harness,
     state,
     contextEnhancement,
+    accessPolicy,
     logger = console,
     replyTimeoutMs = 600_000,
     connectTimeoutMs = 30_000,
@@ -572,6 +658,7 @@ export class WhatsappRuntime {
     this.#harness = harness;
     this.#state = state;
     this.#contextEnhancement = contextEnhancement;
+    this.#accessPolicy = accessPolicy;
     this.#logger = logger;
     this.#replyTimeoutMs = replyTimeoutMs;
     this.#connectTimeoutMs = connectTimeoutMs;
@@ -583,19 +670,10 @@ export class WhatsappRuntime {
       WHATSAPP_MEDIA_UPLOAD_TIMEOUT_MS,
     );
     this.#createSession = createSession;
-    this.setAccessPolicy(config);
   }
 
   get status() {
     return structuredClone(this.#status);
-  }
-
-  setAccessPolicy(value) {
-    const policy = normalizeWhatsappAccessPolicy(value);
-    this.#accessMode = policy.accessMode;
-    this.#allowedPrivateNumbers = new Set(policy.allowedNumbers);
-    this.#config = { ...this.#config, ...policy };
-    return policy;
   }
 
   async start() {
@@ -636,14 +714,6 @@ export class WhatsappRuntime {
           });
           if (!message || outboundIds.has(message.providerMessageId) || !this.#bridge) return;
           this.#status.lastCheckedAt = Date.now();
-          if (!whatsappInboundAllowed(message, {
-            accessMode: this.#accessMode,
-            allowedNumbers: this.#allowedPrivateNumbers,
-          })) {
-            this.#status.messagesRejected += 1;
-            this.#status.lastRejectedAt = new Date().toISOString();
-            return;
-          }
           await this.#bridge.accept(message);
         },
         onDisconnect: ({ error }) => {
@@ -678,6 +748,14 @@ export class WhatsappRuntime {
         harness: this.#harness,
         state: this.#state,
         contextEnhancement: this.#contextEnhancement,
+        accessPolicy: this.#accessPolicy ? {
+          botId: this.#accessPolicy.botId,
+          getSettings: (...args) => this.#accessPolicy.getSettings(...args),
+          ...(typeof this.#accessPolicy.isPrivileged === 'function' ? {
+            isPrivileged: (...args) => this.#accessPolicy.isPrivileged(...args),
+          } : {}),
+          equals: whatsappAccessPolicyIdsEqual,
+        } : undefined,
         status: this.#status,
         logger: this.#logger,
         replyTimeoutMs: this.#replyTimeoutMs,

@@ -4,8 +4,8 @@ import { isAbsolute, resolve } from 'node:path';
 import { t } from './i18n.mjs';
 import { WORKSPACE_SESSION_STALE } from './workspace-session.mjs';
 
-const WORKSPACE_COMMAND = /^\/workspace(?:\s+([\s\S]+))?$/i;
-const WORKSPACE_LIST_COMMAND = /^\/workspacelist(?:\s+([\s\S]+))?$/i;
+const WORKSPACE_COMMAND = /^\/(?:workspace|ws)(?:\s+([\s\S]+))?$/i;
+const WORKSPACE_LIST_COMMAND = /^\/(?:workspacelist|workspaces|wsl)(?:\s+([\s\S]+))?$/i;
 const SESSION_LIST_COMMAND = /^\/(?:sessionlist|sessions)(?:\s+([\s\S]+))?$/i;
 const SESSION_BIND_PREFIX = /^\/session(?=$|\s)/i;
 const SESSION_BIND_COMMAND = /^\/session[ \t]+([^\s]+)$/i;
@@ -18,6 +18,7 @@ const SESSION_BIND_USAGE = '用法：/session Session ID 或当前工作区序�
 const SESSION_LIST_USAGE = [
   '用法：',
   '/sessionlist  列出当前工作区会话',
+  '/sessionlist --limit N  列出当前工作区前 N 个会话（N 为正整数）',
   '/sessionlist 工作区序号  按 /workspacelist 序号列出会话',
   '/sessionlist 工作区绝对路径  列出指定工作区会话',
 ].join('\n');
@@ -43,6 +44,20 @@ function validSessionId(value) {
     && value.length <= MAX_SESSION_ID_LENGTH
     && !/\p{White_Space}/u.test(value)
     && !UNSAFE_DISPLAY_TEXT.test(value);
+}
+
+export function parseSessionListArgument(value) {
+  const argument = typeof value === 'string' ? value.trim() : '';
+  if (!argument) return { selector: '', limit: null };
+  if (!argument.toLowerCase().startsWith('--limit')) {
+    return { selector: argument, limit: null };
+  }
+  const match = /^--limit[ \t]+(\d+)$/iu.exec(argument);
+  const limit = match ? Number(match[1]) : null;
+  if (!Number.isSafeInteger(limit) || limit < 1) {
+    return { error: t(SESSION_LIST_USAGE) };
+  }
+  return { selector: '', limit };
 }
 
 async function existingWorkspacePaths(values) {
@@ -142,7 +157,7 @@ async function runWorkspaceListCommand(match, harness) {
         `${index + 1}. ${workspace}${workspace === current ? t('（当前）') : ''}`
       )),
       '',
-      t('切换用法：/workspace 工作区绝对路径'),
+      t('切换用法：/workspace 工作区序号或绝对路径'),
       t('查看会话：/sessionlist 工作区序号或绝对路径'),
     ];
     const message = lines.join('\n');
@@ -235,12 +250,13 @@ async function currentSessionListWorkspace(harness) {
 }
 
 async function runSessionListCommand(match, harness) {
+  const request = parseSessionListArgument(match[1]);
+  if (request.error) return commandResult(request.error);
   if (typeof harness?.listWorkspaceSessions !== 'function') {
     return commandResult(t('当前机器人暂不支持列出工作区会话。'));
   }
-  const selector = match[1]?.trim() ?? '';
   try {
-    const resolved = await resolveSessionListWorkspace(selector, harness);
+    const resolved = await resolveSessionListWorkspace(request.selector, harness);
     if (resolved.error) return commandResult(resolved.error);
     const listed = await harness.listWorkspaceSessions(resolved.workspace);
     if (!listed || !Array.isArray(listed.sessions)) {
@@ -249,7 +265,10 @@ async function runSessionListCommand(match, harness) {
     harness.assertWorkspaceScope?.();
     const workspace = normalizedWorkspacePath(listed.workspace) ?? resolved.workspace;
     const currentWorkspace = await currentSessionListWorkspace(harness);
-    const message = sessionListMessage(workspace, listed.sessions, {
+    const sessions = request.limit === null
+      ? listed.sessions
+      : listed.sessions.slice(0, request.limit);
+    const message = sessionListMessage(workspace, sessions, {
       currentWorkspace: workspace === currentWorkspace,
     });
     return commandResult(message, splitWorkspaceCommandMessage(message));
@@ -353,7 +372,7 @@ async function runSessionBindCommand(command, harness, conversationKey) {
 }
 
 export async function runWorkspaceCommand(text, harness, conversationKey) {
-  if (typeof text !== 'string') return null;
+  if (!isWorkspaceCommand(text)) return null;
   const command = text.trim();
   if (SESSION_BIND_PREFIX.test(command)) {
     return runSessionBindCommand(command, harness, conversationKey);
@@ -366,22 +385,43 @@ export async function runWorkspaceCommand(text, harness, conversationKey) {
   if (!match) return null;
   const workspace = match[1]?.trim();
   if (!workspace) {
-    return commandResult(t('用法：/workspace 工作区绝对路径'));
+    return commandResult(t('用法：/workspace 工作区序号或绝对路径'));
   }
   if (typeof harness?.switchWorkspace !== 'function') {
     return commandResult(t('当前机器人暂不支持切换工作区。'));
   }
   try {
-    const current = await harness.switchWorkspace(workspace);
+    let selected = workspace;
+    if (/^\d+$/u.test(workspace)) {
+      if (typeof harness?.listWorkspaces !== 'function') {
+        return commandResult(t('当前机器人暂不支持按序号选择工作区。'));
+      }
+      const { paths } = await workspacePathSnapshot(harness);
+      const position = Number(workspace);
+      if (!Number.isSafeInteger(position) || position < 1 || position > paths.length) {
+        return commandResult(t('工作区序号不存在，请先执行 /workspacelist。'));
+      }
+      selected = paths[position - 1];
+    }
+    const current = await harness.switchWorkspace(selected);
     return commandResult(t('工作区已切换为：{workspace}', { workspace: current }));
   } catch (error) {
     if (['workspace-not-absolute', 'workspace-not-found', 'workspace-not-directory'].includes(error?.code)) {
       return commandResult(t(`{message}
-用法：/workspace 工作区绝对路径`, { message: error.message }));
+用法：/workspace 工作区序号或绝对路径`, { message: error.message }));
     }
     if (error?.code === 'workspace-bot-not-found') {
       return commandResult(t('机器人正在移除或已重新接入，无法切换原会话的工作区。'));
     }
     throw error;
   }
+}
+
+export function isWorkspaceCommand(text) {
+  if (typeof text !== 'string') return false;
+  const command = text.trim();
+  return SESSION_BIND_PREFIX.test(command)
+    || SESSION_LIST_COMMAND.test(command)
+    || WORKSPACE_LIST_COMMAND.test(command)
+    || WORKSPACE_COMMAND.test(command);
 }

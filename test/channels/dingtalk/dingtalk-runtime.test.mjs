@@ -260,7 +260,8 @@ for (const scenario of [
     const order = [];
     const asked = [];
     const configFor = ([directEnabled, groupEnabled], guidance) => ({
-      directEnabled, groupEnabled, fields: ['channel', 'botId'], guidance,
+      group: { enabled: groupEnabled, fields: ['channel', 'botId'], guidance },
+      direct: { enabled: directEnabled, fields: ['channel', 'botId'], guidance },
     });
     let config = configFor(scenario.before, 'before callback returned');
     let callback;
@@ -375,10 +376,16 @@ test('runtime never reports ready when connect resolves before the socket opens 
     logger: { warn() {}, error() {} },
   });
 
-  await assert.rejects(runtime.start(), /handshake timed out/);
+  await assert.rejects(
+    runtime.start(),
+    (error) => error.code === 'dingtalk-stream-connect-failed'
+      && /handshake timed out/.test(error.message)
+      && error.cause?.message === error.message,
+  );
   assert.equal(disconnects, 1);
   assert.equal(runtime.status.ready, false);
   assert.equal(runtime.status.dingtalkStreamState, 'failed');
+  assert.match(runtime.status.lastError, /handshake timed out/);
 });
 
 test('runtime bounds a stalled SDK gateway lookup and disconnects a late connection', async () => {

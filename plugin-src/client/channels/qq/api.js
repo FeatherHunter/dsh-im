@@ -1,5 +1,7 @@
 import { normalizeAgentPresetCatalog, normalizeAgentPresetId, SET_AGENT_PRESET_ENDPOINT } from '../../agent-preset.js';
+import { normalizeModelCatalog, normalizeModelSelection, SET_MODEL_ENDPOINT } from '../../model-setting.js';
 import { normalizeLastMessageError } from '../../last-message-error.js';
+import { normalizeAccessPolicy } from '../../../../src/channels/shared/access-policy.mjs';
 import { normalizeContextEnhancementConfig } from '../../../../src/channels/shared/context-enhancement.mjs';
 
 export const QQ_RPC_CHANNEL = '/qq';
@@ -13,8 +15,10 @@ export const QQ_ENDPOINTS = Object.freeze({
   reconnectBot: 'bot.reconnect',
   deleteBot: 'bot.delete',
   setWorkspace: 'bot.workspace.set',
+  setModel: SET_MODEL_ENDPOINT,
   setAgentPreset: SET_AGENT_PRESET_ENDPOINT,
   setContextEnhancement: 'bot.context-enhancement.set',
+  setAccessPolicy: 'bot.access-policy.set',
 });
 
 const PROVISION_STATES = new Set(['starting', 'pending', 'refreshing', 'connecting', 'connected', 'failed', 'cancelled']);
@@ -88,8 +92,12 @@ function normalizeBot(value) {
     connected,
     state: connected ? 'connected' : state,
     workspace: text(value.workspace, '', 4_096),
+    model: normalizeModelSelection(value.model),
     agentPreset: normalizeAgentPresetId(value.agentPreset),
     contextEnhancement: normalizeContextEnhancementConfig(value.contextEnhancement),
+    ...(Object.hasOwn(value, 'accessPolicy')
+      ? { accessPolicy: normalizeAccessPolicy(value.accessPolicy) }
+      : {}),
     bot: {
       name: text(value.bot?.name, 'QQ机器人', 100),
       appIdMasked: text(value.bot?.appIdMasked, '应用标识已安全保存', 140),
@@ -127,6 +135,7 @@ export function normalizeSnapshot(value) {
     totals: { configured: bots.length, connected: bots.filter((bot) => bot.connected).length },
     provisioning: source.provisioning ? normalizeProvisioning(source.provisioning) : null,
     agentPresetCatalog: normalizeAgentPresetCatalog(source.agentPresetCatalog),
+    modelCatalog: normalizeModelCatalog(source.modelCatalog),
     ...(testMessage ? { testMessage } : {}),
   };
 }

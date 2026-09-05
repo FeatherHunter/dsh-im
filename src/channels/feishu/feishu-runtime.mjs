@@ -110,10 +110,12 @@ export class FeishuRuntime {
   #domain;
   #botOpenId;
   #groupResponseMode;
+  #groupTopicReply;
   #ownerOpenIds;
   #harness;
   #state;
   #contextEnhancement;
+  #accessPolicy;
   #replyTimeoutMs;
   #connectTimeoutMs;
   #requestTimeoutMs;
@@ -138,11 +140,13 @@ export class FeishuRuntime {
     domain = 'feishu',
     botOpenId,
     groupResponseMode,
+    groupTopicReply = false,
     ownerOpenId,
     ownerOpenIds,
     harness,
     state,
     contextEnhancement,
+    accessPolicy,
     repair,
     replyTimeoutMs = 600000,
     connectTimeoutMs = 15000,
@@ -172,10 +176,12 @@ export class FeishuRuntime {
     this.#domain = domain;
     this.#botOpenId = nonEmptyString(botOpenId);
     this.#groupResponseMode = normalizeFeishuGroupResponseMode(groupResponseMode);
+    this.#groupTopicReply = groupTopicReply === true;
     this.#ownerOpenIds = normalizedOwners;
     this.#harness = harness;
     this.#state = state;
     this.#contextEnhancement = contextEnhancement;
+    this.#accessPolicy = accessPolicy;
     this.#repair = repair ?? null;
     this.#replyTimeoutMs = replyTimeoutMs;
     this.#connectTimeoutMs = connectTimeoutMs;
@@ -193,6 +199,11 @@ export class FeishuRuntime {
   setGroupResponseMode(value) {
     this.#groupResponseMode = normalizeFeishuGroupResponseMode(value);
     this.#bridge?.setGroupResponseMode(this.#groupResponseMode);
+  }
+
+  setGroupTopicReply(value) {
+    this.#groupTopicReply = value === true;
+    this.#bridge?.setGroupTopicReply(this.#groupTopicReply);
   }
 
   async start() {
@@ -276,14 +287,21 @@ export class FeishuRuntime {
         harness: this.#harness,
         state: this.#state,
         contextEnhancement: this.#contextEnhancement,
+        accessPolicy: this.#accessPolicy,
         status: this.#status,
         allowedSenderOpenIds: new Set(this.#ownerOpenIds),
         botId: this.#botId,
         appId: this.#appId,
         botOpenId: this.#botOpenId,
         groupResponseMode: this.#groupResponseMode,
+        groupTopicReply: this.#groupTopicReply,
         repair: this.#repair,
         replyTimeoutMs: this.#replyTimeoutMs,
+        // Interaction cards (approval/question buttons) are on by default.
+        // Set DSH_IM_INTERACTION_CARDS=0 to fall back to plain-text replies.
+        interactionCards: !['0', 'false', 'no', 'off'].includes(
+          String(process.env.DSH_IM_INTERACTION_CARDS ?? '').trim().toLowerCase(),
+        ),
         signal,
         logger: this.#logger,
       });

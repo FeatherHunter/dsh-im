@@ -13,12 +13,21 @@ import {
   observeBotWorkspaceRemovals,
 } from '../../../../src/channels/shared/bot-workspace-store.mjs';
 import { listAgentPresetCatalog } from '../../../../src/channels/shared/agent-preset.mjs';
+import { listModelCatalog } from '../../../../src/channels/shared/model-setting.mjs';
 import { createDeliveryAdapter } from '../../delivery-adapter.mjs';
 import { createTokenConnectionSupervisor } from '../shared/connection-supervisor.mjs';
 import { pluginPaths } from '../shared/production.mjs';
 import { createHarnessCommandExecutor } from '../../harness-command-executor.mjs';
 import { harnessConnection } from '../../harness-connection.mjs';
 import { createHarnessSessionExecutors } from '../../harness-session-coordinator.mjs';
+import {
+  getInboundTtlRuntime,
+  registerInboundTtlWorkspaces,
+} from '../../inbound-ttl-runtime.mjs';
+import {
+  accessPolicyProvider,
+  initialAccessPolicyFor,
+} from '../shared/access-policy-production.mjs';
 
 export async function createProductionController(ctx, config = {}, internals = {}) {
   if (!ctx?.credentials) throw new TypeError('dsh-im slack requires ctx.credentials');
@@ -43,6 +52,7 @@ export async function createProductionController(ctx, config = {}, internals = {
   await workspaces.reconcile(configuredBots.map((bot) => bot.botId));
   await Promise.all(configuredBots.map((bot) => workspaces.ensure(bot.botId, {
     defaultAgentPreset: config.agentPreset,
+    initialAccessPolicy: initialAccessPolicyFor('slack', bot),
   })));
   const observedConfigStore = typeof configStore.remove === 'function'
     ? observeBotWorkspaceRemovals(configStore, { workspaces })
@@ -58,10 +68,18 @@ export async function createProductionController(ctx, config = {}, internals = {
     return state;
   };
   const commandExecutor = createHarnessCommandExecutor(ctx, internals.commandExecutor);
+  const inboundTtl = internals.inboundTtl ?? getInboundTtlRuntime(ctx, config);
+  const inboundTtlService = inboundTtl?.service ?? inboundTtl;
+  registerInboundTtlWorkspaces(ctx, inboundTtlService, {
+    workspaces,
+    configStore: observedConfigStore,
+    defaultWorkspace,
+  });
   const { controlExecutor, sessionMaintenanceExecutor, fileIngressExecutor } = createHarnessSessionExecutors(ctx, {
     controlExecutor: internals.controlExecutor,
     sessionMaintenanceExecutor: internals.sessionMaintenanceExecutor,
     fileIngressExecutor: internals.fileIngressExecutor,
+    inboundTtlService,
   });
   const harness = new ResolvedHarness({
     ...connection,
@@ -73,6 +91,7 @@ export async function createProductionController(ctx, config = {}, internals = {
     ...(sessionMaintenanceExecutor ? { sessionMaintenanceExecutor } : {}),
     ...(fileIngressExecutor ? { fileIngressExecutor } : {}),
   });
+  const modelCatalog = () => listModelCatalog(harness);
   const coreController = new ResolvedController({
     credentials: ctx.credentials,
     configStore: observedConfigStore,
@@ -80,7 +99,10 @@ export async function createProductionController(ctx, config = {}, internals = {
     ...(internals.inspectCredentials ? { inspectCredentials: internals.inspectCredentials } : {}),
     createRuntime: async ({ botId, config: botConfig, botToken, appToken }) => {
       const state = await stateFor(botId);
-      await workspaces.ensure(botId, { defaultAgentPreset: config.agentPreset });
+      await workspaces.ensure(botId, {
+        defaultAgentPreset: config.agentPreset,
+        initialAccessPolicy: initialAccessPolicyFor('slack', botConfig),
+      });
       const workspaceScope = createBotWorkspaceScope(harness, {
         botId, workspaces, state, agentPresetCatalog,
       });
@@ -91,6 +113,9 @@ export async function createProductionController(ctx, config = {}, internals = {
         harness: workspaceScope.harness,
         state: workspaceScope.state,
         contextEnhancement: { botId, getSettings: () => workspaces.contextEnhancementFor(botId) },
+        accessPolicy: accessPolicyProvider(workspaces, botId, {
+          channel: 'slack', config: botConfig,
+        }),
         replyTimeoutMs: config.replyTimeoutMs ?? 600_000,
         connectTimeoutMs: config.connectTimeoutMs ?? 20_000,
         logger: {
@@ -119,6 +144,7 @@ export async function createProductionController(ctx, config = {}, internals = {
     workspaces,
     stateFor,
     agentPresetCatalog,
+    modelCatalog,
   });
   const supervisor = createSupervisor({
     channel: 'slack',

@@ -1,4 +1,8 @@
 import { t } from './i18n.mjs';
+import {
+  COMMAND_PERMISSION_DENIED_MESSAGE,
+  evaluateInboundAccess,
+} from './inbound-access.mjs';
 import { captureContextEnhancement, enhanceContextContent } from './context-enhancement.mjs';
 import { runWorkspaceCommand } from './workspace-command.mjs';
 import { runCompactCommand } from './compact-command.mjs';
@@ -31,7 +35,6 @@ import {
   hasInboundImages,
   imagePromptDiagnostic,
   imagePromptUserMessage,
-  promptContentForMessage,
 } from './image-prompt.mjs';
 import {
   hasInboundFiles,
@@ -43,6 +46,10 @@ import {
   validHarnessQuestion,
 } from './harness-question.mjs';
 import { deliverOutboundArtifacts } from './semantic/artifact-delivery.mjs';
+import {
+  hasReplyReference,
+  promptContentForInboundMessage,
+} from './semantic/reply-reference.mjs';
 import {
   createDeliveryReceipt,
   createTextDeliveryBlock,
@@ -129,6 +136,7 @@ export class TextHarnessBridge {
   #harness;
   #state;
   #contextEnhancement;
+  #accessPolicy;
   #status;
   #logger;
   #replyTimeoutMs;
@@ -149,6 +157,7 @@ export class TextHarnessBridge {
     harness,
     state,
     contextEnhancement,
+    accessPolicy,
     status = createTextBridgeStatus(),
     logger = console,
     replyTimeoutMs = 600_000,
@@ -162,6 +171,7 @@ export class TextHarnessBridge {
     this.#harness = harness;
     this.#state = state;
     this.#contextEnhancement = contextEnhancement;
+    this.#accessPolicy = accessPolicy;
     this.#status = status;
     this.#logger = logger;
     this.#replyTimeoutMs = replyTimeoutMs;
@@ -176,7 +186,7 @@ export class TextHarnessBridge {
     return structuredClone(this.#status);
   }
 
-  accept(message, { contextSnapshot } = {}) {
+  accept(message, { contextSnapshot, accessDecision } = {}) {
     if (this.#signal?.aborted) return Promise.resolve();
     const conversationId = cleanText(message?.conversationId);
     const kind = message?.kind === 'group' ? 'group' : 'direct';
@@ -186,6 +196,40 @@ export class TextHarnessBridge {
     if (!messageId || !senderId || !conversationId || normalized.senderIsBot === true
       || this.#state.hasSeen(messageId) || this.#acceptedMessageIds.has(messageId)) {
       return Promise.resolve();
+    }
+    // Preserve the channel trigger boundary. Access policy never turns an
+    // unaddressed group message into a denial reply.
+    if (kind === 'group' && normalized.addressed !== true) {
+      this.#status.messagesRejected += 1;
+      this.#status.lastRejectedAt = new Date().toISOString();
+      this.#acceptedMessageIds.set(messageId, null);
+      return this.#finishLocalMessage(normalized, messageId, null);
+    }
+    if (this.#accessPolicy || accessDecision) {
+      const hasImages = hasInboundImages(normalized);
+      const hasFiles = hasInboundFiles(normalized);
+      const decision = accessDecision ?? evaluateInboundAccess(this.#accessPolicy, {
+        conversationType: kind,
+        senderIds: [senderId, cleanText(normalized.senderAlternateId)].filter(Boolean),
+        text: normalized.content,
+        hasImages,
+        hasFiles,
+      });
+      if (!decision.allowed) {
+        this.#status.messagesRejected += 1;
+        this.#status.lastRejectedAt = new Date().toISOString();
+        // Mark policy denials so a webhook replay cannot repeat local work or
+        // a command-permission notice.
+        this.#acceptedMessageIds.set(messageId, null);
+        return this.#finishLocalMessage(
+          normalized,
+          messageId,
+          decision.reason === 'command-not-allowed'
+            ? t(COMMAND_PERMISSION_DENIED_MESSAGE)
+            : null,
+          { recordReceived: decision.reason === 'command-not-allowed' },
+        );
+      }
     }
     this.#acceptedMessageIds.set(messageId, contextSnapshot === undefined
       ? captureContextEnhancement(this.#contextEnhancement, message?.kind)
@@ -242,7 +286,8 @@ export class TextHarnessBridge {
         plainText: Boolean(text)
           && normalized.plainText !== false
           && !hasInboundImages(normalized)
-          && !hasInboundFiles(normalized),
+          && !hasInboundFiles(normalized)
+          && !hasReplyReference(normalized),
       });
       if (batch.handled) {
         if (batch.kind === 'submit') {
@@ -260,7 +305,8 @@ export class TextHarnessBridge {
         plainText: Boolean(text)
           && normalized.plainText !== false
           && !hasInboundImages(normalized)
-          && !hasInboundFiles(normalized),
+          && !hasInboundFiles(normalized)
+          && !hasReplyReference(normalized),
       });
       if (batch.handled) {
         return this.#finishLocalMessage(normalized, messageId, batch.message);
@@ -350,13 +396,15 @@ export class TextHarnessBridge {
     return this.#enqueueMessage(normalized, messageId, senderId, key);
   }
 
-  #finishLocalMessage(message, messageId, reply) {
+  #finishLocalMessage(message, messageId, reply, { recordReceived = true } = {}) {
     let task;
     task = (async () => {
       if (this.#state.hasSeen(messageId)) return;
       await this.#state.markSeen(messageId);
-      this.#status.messagesReceived += 1;
-      this.#status.lastMessageAt = new Date().toISOString();
+      if (recordReceived) {
+        this.#status.messagesReceived += 1;
+        this.#status.lastMessageAt = new Date().toISOString();
+      }
       if (reply) await this.#bot.sendText(message.replyTarget, reply);
       this.#status.lastError = null;
     })().catch(async (error) => {
@@ -532,7 +580,8 @@ export class TextHarnessBridge {
       }
       const hasImages = hasInboundImages(message);
       const hasFiles = hasInboundFiles(message);
-      if (!text && !hasImages && !hasFiles) {
+      const hasReply = hasReplyReference(message);
+      if (!text && !hasImages && !hasFiles && !hasReply) {
         await this.#bot.sendText(target, t('目前支持文字、图片和文件消息。'));
         return;
       }
@@ -545,9 +594,11 @@ export class TextHarnessBridge {
           t('/new  开启一个全新会话'),
           t('/compact  压缩当前会话的较早上下文'),
           t('/history [数量]  查看最近历史消息（默认 3 条，最多 5 条）'),
-          t('/workspace 工作区绝对路径  切换工作区'),
+          t('/workspace 工作区序号或绝对路径  切换工作区'),
           t('/workspacelist  列出工作区绝对路径'),
+          t('/ws、/wsl、/workspaces  工作区命令别名'),
           t('/sessionlist 或 /sessions [工作区序号或绝对路径]  列出会话 ID 和标题'),
+          t('/sessionlist --limit N  仅列出当前工作区前 N 个会话'),
           t('/session Session ID 或当前工作区序号  将当前聊天绑定到指定会话'),
           t('/models  按序号列出所有可用模型'),
           t('/reasoninglist 或 /reasonings  按序号列出当前模型可用推理等级'),
@@ -626,16 +677,23 @@ export class TextHarnessBridge {
           );
         }
       }
-      let content = hasImages
-        ? await promptContentForMessage(message, { signal: this.#signal })
+      let content = hasImages || hasReply
+        ? await promptContentForInboundMessage(message, { signal: this.#signal })
         : undefined;
       const snapshot = this.#acceptedMessageIds.get(messageId);
+      let contextEnhanced = false;
       if (snapshot) {
-        content = enhanceContextContent(content ?? text, snapshot, () => ({
+        const originalContent = content ?? text;
+        const contextSource = message.contextSource?.();
+        content = enhanceContextContent(originalContent, snapshot, () => ({
           channel: this.#descriptor.key,
           senderId,
-          senderName: message.contextSource?.()?.senderName,
+          senderName: contextSource?.senderName,
+          conversationTitle: contextSource?.conversationTitle,
+          chatId: contextSource?.chatId ?? message.conversationId,
+          threadId: contextSource?.threadId,
         }));
+        contextEnhanced = content !== originalContent;
       }
       const { answer, artifacts = [] } = await askInWorkspaceSession({
         harness: this.#harness,
@@ -643,6 +701,7 @@ export class TextHarnessBridge {
         key: conversationKey,
         text,
         content,
+        contextEnhanced,
         createOptions: this.#signal ? { signal: this.#signal } : undefined,
         existsOptions: this.#signal ? { signal: this.#signal } : undefined,
         askOptions: {

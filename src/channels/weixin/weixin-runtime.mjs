@@ -1,5 +1,6 @@
 import { DEFAULT_WEIXIN_MAX_MESSAGE_CHARS, WeixinApiError } from './weixin-api.mjs';
 import { createWeixinBridgeStatus, WeixinHarnessBridge } from './weixin-bridge.mjs';
+import { providerMessageIdsFor } from '../shared/semantic/delivery.mjs';
 import {
   connectionTestTarget,
   connectionTestTargetUnavailable,
@@ -109,6 +110,7 @@ export class WeixinRuntime {
   #harness;
   #state;
   #contextEnhancement;
+  #accessPolicy;
   #logger;
   #replyTimeoutMs;
   #maxMessageChars;
@@ -126,6 +128,7 @@ export class WeixinRuntime {
     harness,
     state,
     contextEnhancement,
+    accessPolicy,
     logger = console,
     replyTimeoutMs = 600_000,
     maxMessageChars = DEFAULT_WEIXIN_MAX_MESSAGE_CHARS,
@@ -140,6 +143,7 @@ export class WeixinRuntime {
     this.#harness = harness;
     this.#state = state;
     this.#contextEnhancement = contextEnhancement;
+    this.#accessPolicy = accessPolicy;
     this.#logger = logger;
     this.#replyTimeoutMs = replyTimeoutMs;
     this.#maxMessageChars = maxMessageChars;
@@ -182,6 +186,7 @@ export class WeixinRuntime {
         harness: this.#harness,
         state: this.#state,
         contextEnhancement: this.#contextEnhancement,
+        accessPolicy: this.#accessPolicy,
         status: this.#status,
         logger: this.#logger,
         replyTimeoutMs: this.#replyTimeoutMs,
@@ -320,14 +325,35 @@ export class WeixinRuntime {
     if (!this.#status.ready || !this.#abortController) {
       throw new Error('Weixin runtime is not connected');
     }
-    await this.#api.sendText({
-      baseUrl: this.#config.baseUrl,
-      token: this.#token,
+    await this.#sendTrackedText({
       toUserId,
       text,
       signal: this.#abortController.signal,
     });
     return { sent: true };
+  }
+
+  async #sendTrackedText({ toUserId, text, signal }) {
+    const sentAt = Date.now();
+    const result = await this.#api.sendText({
+      baseUrl: this.#config.baseUrl,
+      token: this.#token,
+      toUserId,
+      text,
+      signal,
+    });
+    try {
+      await this.#state.rememberOutboundMessage?.({
+        toUserId,
+        text,
+        sentAt,
+        completedAt: Date.now(),
+        providerMessageIds: providerMessageIdsFor(result),
+      });
+    } catch (error) {
+      this.#logger.warn?.('[dsh-weixin] failed to remember an outbound message:', error);
+    }
+    return result;
   }
 
   async sendProactiveText(target, text, { signal } = {}) {
@@ -344,9 +370,7 @@ export class WeixinRuntime {
       throw error;
     }
     signal?.throwIfAborted();
-    await this.#api.sendText({
-      baseUrl: this.#config.baseUrl,
-      token: this.#token,
+    await this.#sendTrackedText({
       toUserId,
       text,
       signal: signal ?? this.#abortController.signal,

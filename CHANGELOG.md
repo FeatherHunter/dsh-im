@@ -6,6 +6,16 @@ This file records the notable changes in each dsh-im release. Its format follows
 
 ## [Unreleased]
 
+## [0.15.5] - 2026-09-05
+
+### Changed / 变更
+
+- **同步上游 `4.11.0`**：`private/custom` 合入上游 `main@1fa86ed`（86 commits：私聊会话双向同步、每机器人独立模型设置、飞书群设置页迁移、多 step 回复保留、入站附件 TTL、引用回复、话题回复等）。私改能力完整保留：飞书附件/媒体隔离（`<media>` 标签剥离 + 快照兜底）、移动端载荷诊断日志、图片预缩。`turn-` 暂存目录命名以上游时间戳方案为准（源码已视 `turn-` 为 legacy）。  Merged upstream `main@1fa86ed` (v4.11.0, 86 commits) into `private/custom`; all private patches retained.
+
+### Fixed / 修复
+
+- **Preset 大小写与 legacy 兜底**：`normalizeAgentPresetId` 大小写不敏感（`PTC`→`ptc`），已下线的 `code` preset 归一到 `standard`（永不落入 `code`）；`/preset PTC`、`/preset CODE` 可用，`/presetlist` 过滤逻辑同步更新。
+
 ## [0.15.4] - 2026-08-31
 
 ### Fixed / 修复
@@ -27,6 +37,181 @@ This file records the notable changes in each dsh-im release. Its format follows
 
 - 新增 `docs/adr/0002-dynamic-package-name.md` 记录决策，`CONTEXT.md` 同步 `cordis -> feather-wch-dsh-im`。
 - **版本断崖**：自 `0.15.3` 起私版与上游 `4.x` 分叉独立演进，不可比 `semver`，同步节奏见 [ADR-0001](docs/adr/0001-fork-and-branch-strategy.md)。
+
+## [4.11.0] - 2026-09-05
+
+### Added / 新增
+
+- 已保存的私聊投递目标新增默认关闭的「会话双向同步」开关。开启后，DSH Web／CLI 在该私聊当前 Session 中提交的用户文字和完成后的助手文字会通过原机器人同步回私聊；IM 自身输入不会重复投递。九个 IM 渠道共用同一实现，自动跟随 `/session`、`/new` 和工作区切换后的当前会话；首版仅支持当前 Host 的私聊文字，不支持显式远程 `harnessBaseUrl`、群聊、Topic 或 Thread。
+  Saved direct-message delivery targets now have an opt-in **Two-way Session sync** switch. When enabled, user text submitted from DSH Web/CLI and the completed assistant text in that DM's current Session are mirrored through the original bot, while IM-originated input is never duplicated. One shared implementation covers all nine IM channels and follows the current Session across `/session`, `/new`, and workspace changes. The first version supports text DMs on the current Host only, excluding explicit remote `harnessBaseUrl` connections, groups, Topics, and Threads.
+
+- 九个 IM 渠道的每个机器人新增独立模型设置，可从 Host 当前可用模型中选择或跟随默认；设置只影响之后新建的 Session，已有 Session 与正在生成的回复不变。
+  Every bot across all nine IM channels now has an independent model setting, selectable from the Host's current model catalog or left to follow the default. The setting applies only to newly created Sessions and does not alter existing Sessions or in-progress replies.
+
+### Changed / 变更
+
+- npm 包元数据新增已验证兼容 DSH `0.1.3-alpha.1`；兼容测试使用官方发布提交 `d347e70`，并完成九渠道各一台机器人的真实主动投递与双向同步冒烟。
+  npm package metadata now declares verified compatibility with DSH `0.1.3-alpha.1`. Compatibility testing used official release commit `d347e70` and completed real proactive-delivery and two-way-sync smoke tests with one bot on each of the nine channels.
+
+- 飞书的「群聊响应方式」与「群聊以话题方式回复」已从机器人卡片主页移入该机器人的设置页，使卡片布局与其他渠道保持一致。
+  Feishu's “Group response mode” and “Reply to group chats as topics” controls have moved from the bot-card overview into that bot's settings page, aligning the card layout with the other channels.
+
+### Fixed / 修复
+
+- 九个 IM 渠道现在会按 step 顺序保留同一 Turn 的全部助手正文，并用定稿消息替换同 step 的流式草稿；多 step 回答不再在最终投递或进入新 step 时只剩最后一段。
+  All nine IM channels now retain every assistant text step in turn order and replace each step's streamed draft with its canonical message, preventing multi-step replies from collapsing to the final fragment during streaming or final delivery.
+
+## [4.10.0] - 2026-09-05
+
+### Added / 新增
+
+- 入站附件改为按时间戳目录持久落盘，并新增全局保留时长（TTL）设置：`-1` 永久保留、`0` 每轮对话结束后立即删除、`1-8760` 整数小时后自动清理，默认 `168` 小时（7 天）；清理在进程启动、每 30 分钟及设置页手动触发时执行，进行中对话的目录会被跳过。通用设置通过顶部 GitHub 按钮右侧的齿轮进入，附件保留功能位于首个「附件」Tab；取值说明收纳在标题右侧的问号中，修改后通过「保存」按钮明确提交。清扫会拒绝位于工作区外的符号链接附件目录。历史 `turn-` 目录及无法解析的目录不参与清理，需要手动删除。清扫仅覆盖各渠道当前配置的工作区；Bot 通过 `/workspace` 切换工作区后，旧工作区中已持久化的附件目录不再参与自动清理，需手动删除。
+  Inbound attachments now persist under timestamped directories with a global retention (TTL) setting: `-1` keeps them forever, `0` deletes each directory right after its turn ends, and whole hours `1-8760` clean them automatically, defaulting to `168` hours (7 days). Sweeps run at process startup, every 30 minutes, and on demand from the settings page, always skipping directories owned by in-flight turns. General settings open from the gear beside the top GitHub button, with attachment retention under the first “Attachments” tab. Sweeps refuse symlinked attachment roots outside the workspace. Legacy `turn-` directories and unparseable names are never touched and must be removed manually. Sweeping only covers each channel's currently configured workspaces; after a bot switches its workspace via `/workspace`, persisted attachment directories left in the previous workspace are no longer swept and must be removed manually.
+
+- 飞书机器人设置新增「群聊以话题方式回复」开关：开启后，群聊中向机器人提问会自动开启一条独立的飞书话题，回答落在话题内；每个话题是 dsh 会话列表里的一条独立会话，上下文互不串。私聊不受影响。可分别对每个机器人开启或关闭。
+  Feishu bots gain a “Reply to group chats as Feishu topics” switch. When enabled, a question addressed to the bot in a group auto-opens a dedicated Feishu topic and replies stay inside it; each topic is an independent conversation in dsh with its own context. Private chats are unaffected. The switch is configured per bot.
+
+- 同 Host 插件的 `ctx.dshIm` 服务新增 `listBots()`，可发现已配置机器人的公开 `botId` 与渠道类型，再配合现有 `listTargets()` 和 `send()` 完成主动投递；返回值不包含凭据、平台路由或目标内容。
+  The same-Host `ctx.dshIm` service now exposes `listBots()`, allowing plugins to discover each configured bot's public `botId` and channel before using the existing `listTargets()` and `send()` APIs for proactive delivery. Results contain no credentials, provider routes, or target content.
+
+### Changed / 变更
+
+- npm 包元数据现在声明已验证兼容 DSH `0.1.2-alpha.4`、`0.1.2-alpha.5` 与 `0.1.2-rc.1` 的 Web profile。
+  npm package metadata now declares verified Web-profile compatibility with DSH `0.1.2-alpha.4`, `0.1.2-alpha.5`, and `0.1.2-rc.1`.
+
+### Fixed / 修复
+
+- 新版 DSH Session 使用 `snapshotEvents()` 时，IM 的 `/stop` 现在可以再次识别并停止当前所属 Turn。
+  IM `/stop` once again recognizes and cancels the currently owned turn when running against modern DSH Sessions that expose `snapshotEvents()`.
+
+- 飞书在 DSH v2 生成回复期间会重新接收并转发实时 assistant chunk，流式卡片不再等到最终消息落盘后才显示整段回答。
+  Feishu now receives and forwards live assistant chunks while DSH v2 is generating, so streaming cards no longer wait for the final durable message before displaying the full reply.
+
+## [4.9.1] - 2026-09-04
+
+### Fixed / 修复
+
+- 九个 IM 渠道的 Harness 结构化问题与审批现在兼容新 DSH Session 的 `snapshotEvents()` 接口，同时保留旧 `session.events` 与旧 Host `apiProxy` 路径；交互不再只停留在 DSH Web，IM 用户回答或审批后原 Turn 可继续完成。
+  Harness structured questions and approvals across all nine IM channels now support the new DSH Session `snapshotEvents()` API while retaining the legacy `session.events` and Host `apiProxy` paths. Interactions no longer remain visible only in DSH Web, and the originating turn can continue after the IM user answers or decides.
+
+- 钉钉机器人连接失败时现在会按 Harness、凭据、超时、DNS、TLS、代理、SDK 与依赖兼容性等原因提供脱敏且可操作的诊断，并用参考号关联设置页提示与 Host 日志；已保存但尚未连通的机器人也会保留在设置页供排查。
+  DingTalk connection failures now provide redacted, actionable diagnostics for Harness, credential, timeout, DNS, TLS, proxy, SDK, and dependency-compatibility causes, with a reference ID linking settings feedback to Host logs. Saved bots that are not yet connected also remain available in settings for troubleshooting.
+
+## [4.9.0] - 2026-09-03
+
+### Added / 新增
+
+- 飞书的 Harness 审批与单选问题默认使用带按钮的交互卡片；审批人和答题人会绑定到发起者，多题场景会拒绝过期卡片，并在卡片不可用时保留纯文本降级流程。可通过 `DSH_IM_INTERACTION_CARDS=0` 或 `interactionCards=false` 继续使用纯文本交互。
+  Harness approvals and single-choice questions in Feishu now use interactive cards with buttons by default. Decisions are bound to the initiating actor, stale cards are rejected in multi-question flows, and plain-text fallback remains available when cards cannot be used. Set `DSH_IM_INTERACTION_CARDS=0` or `interactionCards=false` to keep the plain-text interaction flow.
+
+- 九个渠道的工作区命令新增快捷别名：`/ws` 等价于 `/workspace`，`/workspaces` 与 `/wsl` 等价于 `/workspacelist`。
+  Workspace commands across all nine channels now have shortcuts: `/ws` aliases `/workspace`, while `/workspaces` and `/wsl` alias `/workspacelist`.
+
+### Fixed / 修复
+
+- Harness 回复等待改为按活动续期：持续产生事件或 Harness 明确报告 Session 仍在运行的长任务不再被固定 10 分钟上限误报超时；已开始但停止推进且不再运行的任务仍会按停滞窗口超时。
+  Harness reply waits now renew from activity: long-running turns that keep producing events or are still reported as running no longer hit a fixed ten-minute timeout, while started turns that stop progressing and are no longer running still time out after the stall window.
+
+- 引用消息注入 Harness 时不再携带内部消息 ID、作者 ID、空附件数组及默认 `truncated: false`，减少与回答无关的元数据，同时保留作者名称、正文、有效附件及不可用原因。
+  Quoted-message context sent to Harness no longer includes internal message IDs, author IDs, empty attachment arrays, or the default `truncated: false`, reducing irrelevant metadata while preserving the author name, content, useful attachments, and unavailable reason.
+
+- 飞书交互卡片现在保持引用回复语义，避免问题或审批卡片脱离触发它的消息上下文。
+  Feishu interaction cards now preserve reply semantics so question and approval cards stay attached to the message context that triggered them.
+
+- 上下文增强设置中的字段帮助提示会按左右栏定位，不再被设置面板边缘裁切。
+  Field-help tooltips in Context enhancement settings now align to their column instead of being clipped by the settings-panel edge.
+
+### Documentation / 文档
+
+- 中英文 README 的详细安装、命令、访问模式与上下文增强说明已拆分到独立指南，并补充主动投递 Webhook 方案等文档。
+  Detailed installation, command, access-mode, and Context enhancement material has moved from the Chinese and English READMEs into focused guides, with additional documentation for proactive-delivery webhooks and related workflows.
+
+## [4.8.0] - 2026-09-02
+
+### Added / 新增
+
+- 上下文增强新增两个来源字段：`chatId`（会话标识，用于区分群组或私聊）与 `threadId`（话题标识，飞书话题群会带上 `thread_id`，用于区分同一群组内的不同话题）。九个渠道均可勾选；飞书群聊直接提供群 ID，Slack/Telegram 话题、Discord 频道等渠道也按各自事件补齐。仍只发送当前消息中已有的值，不查询平台 API。
+  Context enhancement adds two source fields: `chatId` (the chat ID that distinguishes groups or direct chats) and `threadId` (the topic ID; Feishu topic chats carry `thread_id`, telling different topics inside the same group apart). All nine channels can select them; Feishu group chats provide the group ID directly, and Slack/Telegram topics, Discord channels, and other channels are wired per their own events. Only values already present in the current message are sent; no platform APIs are queried.
+
+### Fixed / 修复
+
+- 机器人工作区目录选择器现在同时识别新版 DSH 的 `directory-picker/*` 错误码与旧版连字符错误码；native 后端会正确回退到系统目录选择器，已失效的保存路径也会回退到 Host 主目录。
+  The bot workspace directory picker now recognizes both current DSH `directory-picker/*` error codes and legacy hyphenated codes, restoring the native system-picker fallback and the Host-home fallback for stale saved paths.
+
+## [4.7.0] - 2026-09-02
+
+### Added / 新增
+
+- `/sessionlist --limit N` 与等价命令 `/sessions --limit N` 现在可按现有顺序仅返回当前工作区的前 N 个会话；`N` 必须是正整数，该参数仅影响本次响应，不改变机器人或全局配置。飞书的分页会话卡片会在后续翻页与选择操作中保持同一限制。
+  `/sessionlist --limit N` and its `/sessions --limit N` alias now return only the first N sessions in the current workspace's existing order. `N` must be a positive integer, and the option affects only that response without changing bot or global settings. Feishu's paginated session card preserves the same limit across subsequent page and selection actions.
+
+## [4.6.0] - 2026-09-02
+
+### Added / 新增
+
+- 非视觉模型收到图片时不再直接报错丢图：宿主以 `MODEL_DOES_NOT_SUPPORT_IMAGES` 拒绝带图片的 prompt 后，自动把同一批图片字节按入站文件管线落盘到 Session 工作区，并以"原文本 + 工具分析指引 + `<dsh_im_files>` 清单"的纯文本 prompt 复用同一 rpcId 重试一次，使非视觉模型仍可通过 run_code/pwsh 等工具识图；视觉模型与文件消息行为不变，其余图片错误仍按原样提示。
+  Sending an image to a non-vision model no longer fails outright: when the Host rejects an image-bearing prompt with `MODEL_DOES_NOT_SUPPORT_IMAGES`, the same image bytes are automatically staged into the Session workspace through the inbound-file pipeline and retried once as a text-only prompt (original text plus tool-analysis guidance and the `<dsh_im_files>` manifest) under the same rpcId, so non-vision models can still inspect images via tools such as run_code/pwsh. Vision models and file messages are unchanged, and other image errors keep their existing messages.
+
+- 九个 IM 渠道统一支持引用或回复消息上下文：Harness 会在当前问题之前收到安全序列化的 `<dsh_im_reply_to>`，包含平台可提供的原消息文字、作者及附件类型/名称；缺少正文快照的渠道仅在访问控制和本地交互完成后进行同会话、有界的延迟查询或 Session 历史恢复，失败时不阻断当前问题，也不会把引用内容误当作命令、审批或问题回答。
+  All nine IM channels now preserve quoted or replied-to message context. Harness receives a safely serialized `<dsh_im_reply_to>` before the current question with the original text, author, and attachment type/name when available. Channels without a content snapshot perform only bounded, same-conversation lazy lookup or Session-history recovery after access control and local interactions; lookup failure does not block the current question, and quoted content cannot be interpreted as a command, approval, or question answer.
+
+### Fixed / 修复
+
+- 非视觉模型图片回退在文件落盘阶段收到取消信号时，现在会保留调用方的取消原因并停止处理，不再误报模型不支持图片。
+  When image fallback for a non-vision model is cancelled while staging files, it now preserves the caller's cancellation reason and stops instead of reporting that the model does not support images.
+
+## [4.5.0] - 2026-09-01
+
+### Added / 新增
+
+- `/workspace` 现在支持使用 `/workspacelist` 中的工作区序号切换，并在执行命令时按最新列表解析；原有绝对路径用法保持不变。
+  `/workspace` now accepts a workspace number from `/workspacelist`, resolved against the latest list when the command runs; the existing absolute-path form remains supported.
+
+- 上下文增强新增可选的 `conversationTitle` 来源字段；渠道入站事件提供会话标题时可将其写入 `<dsh_im_source>`，无需额外的平台 API 请求。
+  Context enhancement now offers an optional `conversationTitle` source field. When an inbound channel event provides a conversation title, it can be included in `<dsh_im_source>` without an additional platform API request.
+
+### Fixed / 修复
+
+- 新建 Harness Session 的标题现在始终基于未经上下文增强的首条用户消息：启用增强时会移除注入块后安全设置标题，未启用增强时继续保留 Harness 的原生自动标题；标题会清理控制字符并按 UTF-8 字节安全截断。
+  New Harness Session titles now consistently reflect the unenhanced first user message. With enhancement enabled, dsh-im safely sets a title without injected context blocks; without enhancement, the Harness-native automatic title is preserved. Titles are sanitized and truncated safely by UTF-8 byte length.
+
+- 飞书流式回复在同一轮出现 Harness 问题或审批交互时，会先结束当前卡片并在交互完成后创建新卡片，使最终回答显示在交互卡片之后；卡片轮换失败时保持可用的降级投递。
+  When a Feishu streaming turn presents an in-turn Harness question or approval, dsh-im now finalizes the current card and starts a new one after the interaction so the final answer appears below the interaction card, with usable fallback delivery if card rotation fails.
+
+## [4.4.0] - 2026-09-01
+
+### Added / 新增
+
+- 九个 IM 渠道新增统一的机器人级“访问设置”：私聊与群聊可分别选择允许所有用户或仅白名单用户，并独立配置默认命令权限、命令权限例外及白名单用户权限。策略按 `botId` 原子保存，保存后对新入站消息立即生效；原 owner、扫码接入者等既有特权身份继续保留访问与完整命令权限，Telegram 与 WhatsApp 旧访问配置会自动迁移。
+  All nine IM channels now provide unified per-bot Access settings. Direct and group chats can independently allow everyone or only allowlisted users, with separate default command permissions, command-permission overrides, and per-user allowlist permissions. Policies are atomically stored by `botId` and apply to new inbound messages immediately; existing privileged identities such as owners and QR provisioners retain full access and command permissions, while legacy Telegram and WhatsApp access settings migrate automatically.
+
+### Changed / 变更
+
+- 机器人卡片的设置页改为可扩展的横向 Tab 布局，现有 Bot ID、投递目标管理与专属使用文档统一归入“投递设置”页签。
+  Bot-card settings now use an extensible horizontal tab layout, with the existing Bot ID, delivery-target management, and dedicated guide grouped under the Delivery settings tab.
+
+### Fixed / 修复
+
+- 飞书长连接现在会先按常见 `NO_PROXY` / `no_proxy` 语义排除 `open.feishu.cn` 与 `open.larksuite.com`，仅在未命中排除规则时使用代理环境变量，避免本地代理导致长连接持续失败重试。
+  Feishu long connections now honor standard `NO_PROXY` / `no_proxy` matching for `open.feishu.cn` and `open.larksuite.com` before using proxy environment variables, preventing local proxies from forcing the connection into a retry loop.
+
+- 飞书话题群中的卡片操作确认、watch 完成通知、命令及子流程失败提示现在都会回复到对应卡片或触发消息所在话题；没有可用话题锚点的历史数据继续沿用原有投递方式。
+  Feishu card-action confirmations, watch completion notices, and command or sub-flow failures in topic groups now reply inside the topic containing the relevant card or triggering message; legacy entries without an anchor keep their previous delivery behavior.
+
+## [4.3.0] - 2026-09-01
+
+### Added / 新增
+
+- 飞书话题群现在按 `thread_id` 为每个话题隔离 Harness Session、上下文、批量输入与待处理交互；普通群聊和私聊的会话键保持不变。回答流、命令结果、菜单卡片、Harness 问题及审批提示也会回复到触发消息所在话题，引用消息失效时安全回退为普通消息。
+  Feishu topic groups now isolate Harness Sessions, context, batch input, and pending interactions by `thread_id`, while regular group and direct-chat keys remain unchanged. Answer streams, command results, menu cards, Harness questions, and approval prompts reply inside the triggering topic, with a safe plain-message fallback when the referenced message is unavailable.
+
+- QQ 入站消息现在启用 SDK 表情标签解析，把不透明的 `<faceType=...>` 片段转换为 `【表情: 名称】` 等可读文本后再交给 Harness。
+  QQ inbound messages now enable the SDK face-tag parser, converting opaque `<faceType=...>` fragments into readable text such as `【表情: name】` before delivery to Harness.
+
+### Changed / 变更
+
+- 上下文增强现在为群聊和私聊分别保存启用开关、来源字段与增强提示词，接收消息时只使用当前会话类型对应的配置。旧版共用字段与提示词会在升级后自动映射到两个场景，并在下一次成功写入机器人设置时无损保存为新结构，无需手工迁移。
+  Context enhancement now stores independent enable switches, source fields, and guidance for group and direct chats, and inbound messages use only the matching conversation configuration. Existing shared fields and guidance are automatically mapped to both scopes after upgrade and are losslessly persisted in the new structure on the next successful bot-settings write, with no manual migration required.
 
 ## [4.2.1] - 2026-08-31
 
@@ -536,7 +721,17 @@ This file records the notable changes in each dsh-im release. Its format follows
 - 改进 npm 发布包结构，保留 CLI 入口并避免安装脚本拦截。
   Improved npm package contents to preserve the CLI entry point and avoid install-script blocking.
 
-[Unreleased]: https://github.com/xmanrui/dsh-im/compare/v4.2.1...HEAD
+[Unreleased]: https://github.com/xmanrui/dsh-im/compare/v4.11.0...HEAD
+[4.11.0]: https://github.com/xmanrui/dsh-im/compare/v4.10.0...v4.11.0
+[4.10.0]: https://github.com/xmanrui/dsh-im/compare/v4.9.1...v4.10.0
+[4.9.1]: https://github.com/xmanrui/dsh-im/compare/v4.9.0...v4.9.1
+[4.9.0]: https://github.com/xmanrui/dsh-im/compare/v4.8.0...v4.9.0
+[4.8.0]: https://github.com/xmanrui/dsh-im/compare/v4.7.0...v4.8.0
+[4.7.0]: https://github.com/xmanrui/dsh-im/compare/v4.6.0...v4.7.0
+[4.6.0]: https://github.com/xmanrui/dsh-im/compare/v4.5.0...v4.6.0
+[4.5.0]: https://github.com/xmanrui/dsh-im/compare/v4.4.0...v4.5.0
+[4.4.0]: https://github.com/xmanrui/dsh-im/compare/v4.3.0...v4.4.0
+[4.3.0]: https://github.com/xmanrui/dsh-im/compare/v4.2.1...v4.3.0
 [4.2.1]: https://github.com/xmanrui/dsh-im/compare/v4.2.0...v4.2.1
 [4.2.0]: https://github.com/xmanrui/dsh-im/compare/v4.1.1...v4.2.0
 [4.1.1]: https://github.com/xmanrui/dsh-im/compare/v4.1.0...v4.1.1

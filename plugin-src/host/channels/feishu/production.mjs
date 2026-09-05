@@ -7,6 +7,10 @@ import { createConnectionSupervisor } from './connection-supervisor.mjs';
 import { createHarnessCommandExecutor } from '../../harness-command-executor.mjs';
 import { harnessConnection } from '../../harness-connection.mjs';
 import { createHarnessSessionExecutors } from '../../harness-session-coordinator.mjs';
+import {
+  getInboundTtlRuntime,
+  registerInboundTtlWorkspaces,
+} from '../../inbound-ttl-runtime.mjs';
 import { verifyFeishuApp } from '../../../../src/channels/feishu/feishu-app.mjs';
 import { FeishuRuntime } from '../../../../src/channels/feishu/feishu-runtime.mjs';
 import { HarnessClient } from '../../../../src/channels/feishu/harness-client.mjs';
@@ -23,9 +27,41 @@ import {
   observeBotWorkspaceRemovals,
 } from '../../../../src/channels/shared/bot-workspace-store.mjs';
 import { listAgentPresetCatalog } from '../../../../src/channels/shared/agent-preset.mjs';
+import { listModelCatalog } from '../../../../src/channels/shared/model-setting.mjs';
 import { createDeliveryAdapter } from '../../delivery-adapter.mjs';
+import {
+  accessPolicyProvider,
+  initialAccessPolicyFor,
+} from '../shared/access-policy-production.mjs';
+
+// The WebSocket agent built here is only used for the Feishu long connection,
+// whose endpoint is open.feishu.cn (Feishu) or open.larksuite.com (Lark).
+// Honor NO_PROXY/no_proxy for those hosts so users with blanket proxy
+// environments exported in their shell (Clash/V2Ray etc.) keep a direct
+// connection to Feishu instead of routing the WSS handshake through the proxy.
+const LONG_CONNECTION_HOSTS = ['open.feishu.cn', 'open.larksuite.com'];
+
+function hostExcludedByNoProxyEntry(host, entry) {
+  if (entry === '*') return true;
+  const bare = entry.startsWith('.') ? entry.slice(1) : entry;
+  if (!bare) return false;
+  return host === bare || host.endsWith(`.${bare}`);
+}
+
+function longConnectionExcludedByNoProxy(env) {
+  for (const key of ['no_proxy', 'NO_PROXY']) {
+    const value = env?.[key];
+    if (typeof value !== 'string' || !value.trim()) continue;
+    const entries = value.split(',').map((entry) => entry.trim().toLowerCase()).filter(Boolean);
+    if (LONG_CONNECTION_HOSTS.some((host) => entries.some((entry) => hostExcludedByNoProxyEntry(host, entry)))) {
+      return true;
+    }
+  }
+  return false;
+}
 
 function webSocketProxyUrl(env) {
+  if (longConnectionExcludedByNoProxy(env)) return undefined;
   for (const key of ['https_proxy', 'HTTPS_PROXY', 'http_proxy', 'HTTP_PROXY']) {
     const value = env?.[key];
     if (typeof value === 'string' && value.trim()) return value.trim();
@@ -93,6 +129,7 @@ export async function createProductionController(ctx, config = {}, internals = {
   }
   await Promise.all(configuredBots.map((bot) => workspaces.ensure(bot.id, {
     defaultAgentPreset: config.agentPreset,
+    initialAccessPolicy: initialAccessPolicyFor('feishu', bot),
   })));
   const observedConfigStore = typeof configStore.removeBot === 'function'
     ? observeBotWorkspaceRemovals(configStore, {
@@ -126,10 +163,19 @@ export async function createProductionController(ctx, config = {}, internals = {
     return stateFor(botConfig);
   };
   const commandExecutor = createHarnessCommandExecutor(ctx, internals.commandExecutor);
+  const inboundTtl = internals.inboundTtl ?? getInboundTtlRuntime(ctx, config);
+  const inboundTtlService = inboundTtl?.service ?? inboundTtl;
+  registerInboundTtlWorkspaces(ctx, inboundTtlService, {
+    workspaces,
+    configStore: observedConfigStore,
+    defaultWorkspace,
+    botIdFrom: (bot) => bot?.id,
+  });
   const { controlExecutor, sessionMaintenanceExecutor, fileIngressExecutor } = createHarnessSessionExecutors(ctx, {
     controlExecutor: internals.controlExecutor,
     sessionMaintenanceExecutor: internals.sessionMaintenanceExecutor,
     fileIngressExecutor: internals.fileIngressExecutor,
+    inboundTtlService,
   });
   const harness = new Harness({
     ...connection,
@@ -146,6 +192,7 @@ export async function createProductionController(ctx, config = {}, internals = {
   const proxyEnv = internals.proxyEnv ?? process.env;
   const wsAgent = createFeishuWebSocketAgent(proxyEnv, internals.createProxyAgent);
 
+  const modelCatalog = () => listModelCatalog(harness);
   const coreController = new Controller({
     registerApp: (options) => lark.registerApp(options),
     verifyApp,
@@ -154,7 +201,10 @@ export async function createProductionController(ctx, config = {}, internals = {
     createRuntime: async ({ botId, config: botConfig, appSecret, repair }) => {
       const state = await stateFor(botConfig);
       const id = botId ?? botConfig.id ?? botConfig.appId;
-      await workspaces.ensure(id, { defaultAgentPreset: config.agentPreset });
+      await workspaces.ensure(id, {
+        defaultAgentPreset: config.agentPreset,
+        initialAccessPolicy: initialAccessPolicyFor('feishu', botConfig),
+      });
       const workspaceScope = createBotWorkspaceScope(harness, {
         botId: id, workspaces, state, agentPresetCatalog,
       });
@@ -167,10 +217,14 @@ export async function createProductionController(ctx, config = {}, internals = {
         domain: botConfig.domain,
         botOpenId: botConfig.botOpenId,
         groupResponseMode: botConfig.groupResponseMode,
+        groupTopicReply: botConfig.groupTopicReply,
         ownerOpenIds: botConfig.ownerOpenIds ?? [botConfig.ownerOpenId],
         harness: workspaceScope.harness,
         state: workspaceScope.state,
         contextEnhancement: { botId: id, getSettings: () => workspaces.contextEnhancementFor(id) },
+        accessPolicy: accessPolicyProvider(workspaces, id, {
+          channel: 'feishu', config: botConfig,
+        }),
         replyTimeoutMs: config.replyTimeoutMs ?? 600_000,
         slashCommands: config.slashCommands !== false,
         ...(wsAgent ? { wsAgent } : {}),
@@ -195,6 +249,7 @@ export async function createProductionController(ctx, config = {}, internals = {
     workspaces,
     stateFor: stateForBotId,
     agentPresetCatalog,
+    modelCatalog,
   });
 
   const supervisor = createSupervisor({

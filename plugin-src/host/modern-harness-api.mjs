@@ -52,6 +52,15 @@ function questionError(message, code) {
   return error;
 }
 
+function sessionEvents(session) {
+  if (typeof session?.snapshotEvents === 'function') {
+    const events = session.snapshotEvents();
+    if (Array.isArray(events)) return events;
+  }
+  const events = session?.events;
+  return Array.isArray(events) ? events : null;
+}
+
 function matchesQuestions(value, pending) {
   if (!value || typeof value !== 'object'
     || value.sessionId !== pending.sessionId
@@ -191,6 +200,7 @@ class ModernHarnessApi {
   #pendingQuestions = new Map();
   #pendingApprovals = new Map();
   #sessionCursors = new Map();
+  #assistantStreams = new Map();
   #disposers = [];
   #disposed = false;
 
@@ -221,6 +231,9 @@ class ModernHarnessApi {
         { request: { requestId: request.rpcId, ...request.payload } },
         signal,
       )),
+      rename: (request, signal) => rpcResult(request, () => this.#invoke(
+        'session', 'rename', { request: request.payload }, signal,
+      )),
       cancel: (request, signal) => rpcResult(request, () => this.#invoke(
         'session', 'cancel', { request: { sessionId: request.payload.sessionId } }, signal,
       )),
@@ -248,6 +261,13 @@ class ModernHarnessApi {
         if (typeof sessionId !== 'string' || !event || typeof event !== 'object') return;
         if (Number.isSafeInteger(event.seq)) this.#rememberCursor(sessionId, event.seq);
         this.#broadcast({ type: 'session/event', sessionId, event });
+      }, { global: true }));
+      this.#disposers.push(ctx.on('agent/assistant-stream', ({ agent, frame }) => {
+        this.#acceptAssistantStream(agent, frame);
+      }, { global: true }));
+      this.#disposers.push(ctx.on('agent/disposed', ({ agent }) => {
+        const sessionId = agent?.session?.id;
+        if (typeof sessionId === 'string') this.#assistantStreams.delete(sessionId);
       }, { global: true }));
       this.#disposers.push(ctx.on(
         'approval/request',
@@ -316,7 +336,7 @@ class ModernHarnessApi {
       cursor = this.#sessionCursors.get(sessionId) ?? snapshot.cursor;
       if (beforeSeq === undefined && cursor === snapshot.cursor) {
         return {
-          events: historyEntries(snapshot.records),
+          events: this.#withAssistantStream(sessionId, historyEntries(snapshot.records)),
           hasMore: snapshot.hasMore === true,
           ...(snapshot.projections === undefined ? {} : { projections: snapshot.projections }),
         };
@@ -330,7 +350,54 @@ class ModernHarnessApi {
         ...(beforeSeq === undefined ? {} : { beforeSeq }),
       },
     }, signal);
-    return { events: historyEntries(page.records), hasMore: page.hasMore === true };
+    return {
+      events: beforeSeq === undefined
+        ? this.#withAssistantStream(sessionId, historyEntries(page.records))
+        : historyEntries(page.records),
+      hasMore: page.hasMore === true,
+    };
+  }
+
+  #acceptAssistantStream(agent, frame) {
+    const sessionId = agent?.session?.id;
+    if (typeof sessionId !== 'string' || !frame || typeof frame !== 'object') return;
+    if (frame.type === 'start') {
+      const nextSeq = agent?.session?.seq;
+      const startedAfterSeq = Number.isSafeInteger(nextSeq) && nextSeq >= 0
+        ? nextSeq - 1
+        : this.#sessionCursors.get(sessionId) ?? -1;
+      this.#assistantStreams.set(sessionId, {
+        attemptId: frame.attemptId,
+        turn: frame.turn,
+        step: frame.step,
+        startedAfterSeq,
+        entries: [],
+      });
+      return;
+    }
+    const stream = this.#assistantStreams.get(sessionId);
+    if (!stream || stream.attemptId !== frame.attemptId) return;
+    if (frame.type === 'end') {
+      this.#assistantStreams.delete(sessionId);
+      return;
+    }
+    if (frame.type !== 'chunk' || frame.index !== stream.entries.length) return;
+    stream.entries.push({
+      type: 'transient',
+      event: {
+        type: 'assistant/chunk',
+        // Match DSH's Web client ordering: live chunks sit in the numeric gap
+        // before the durable assistant/message that replaces them.
+        seq: stream.startedAfterSeq + 1 - 1 / (frame.index + 2),
+        time: frame.time,
+        data: { turn: stream.turn, step: stream.step, chunk: frame.chunk },
+      },
+    });
+  }
+
+  #withAssistantStream(sessionId, entries) {
+    const transient = this.#assistantStreams.get(sessionId)?.entries ?? [];
+    return transient.length === 0 ? entries : [...entries, ...transient];
   }
 
   #rememberCursor(sessionId, cursor) {
@@ -382,15 +449,15 @@ class ModernHarnessApi {
   }
 
   #claimableAgent(agent) {
-    const sessionId = agent?.session?.id ?? agent?.id;
-    if (typeof sessionId !== 'string' || !agent?.session || !Array.isArray(agent.session.events)) {
-      return null;
-    }
+    const session = agent?.session;
+    const sessionId = session?.id ?? agent?.id;
+    const events = sessionEvents(session);
+    if (typeof sessionId !== 'string' || !events) return null;
     return hasActiveHarnessInteractionOwner(
       this.#scope,
       sessionId,
-      agent.session.events,
-    ) ? { sessionId, session: agent.session } : null;
+      events,
+    ) ? { sessionId, events } : null;
   }
 
   #questionFrame(pending) {
@@ -461,8 +528,8 @@ class ModernHarnessApi {
     const claimed = new Set([...this.#pendingApprovals.values()].map((entry) => entry.approvalId));
     const decided = new Set();
     let approvalId;
-    for (let index = owner.session.events.length - 1; index >= 0; index -= 1) {
-      const event = owner.session.events[index];
+    for (let index = owner.events.length - 1; index >= 0; index -= 1) {
+      const event = owner.events[index];
       if (event.type === 'approval/decided') {
         decided.add(event.data?.id);
       } else if (event.type === 'approval/asked') {
@@ -544,6 +611,7 @@ class ModernHarnessApi {
     if (this.#disposed) return;
     this.#disposed = true;
     for (const subscription of [...this.#mux]) subscription.close();
+    this.#assistantStreams.clear();
     for (const pending of [...this.#pendingApprovals.values()]) pending.settle('cancelled');
     for (const pending of [...this.#pendingQuestions.values()]) pending.settle(
       'cancelled',

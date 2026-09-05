@@ -4,6 +4,7 @@ import { createEditableMessageStream, splitMessageText } from '../shared/editabl
 import { createTextDeliveryBlock } from '../shared/semantic/delivery.mjs';
 import { t } from '../shared/i18n.mjs';
 import { captureContextEnhancement } from '../shared/context-enhancement.mjs';
+import { recoverAssistantTextByTimestamp } from '../shared/session-reply-recovery.mjs';
 import { COMMANDS_MENU_BUTTON, TelegramApi } from './telegram-api.mjs';
 import { createTelegramHttpTransport } from './telegram-http.mjs';
 import { createTelegramBridgeStatus, TelegramHarnessBridge } from './telegram-bridge.mjs';
@@ -14,14 +15,16 @@ import {
 } from './telegram-rich-message.mjs';
 import {
   TELEGRAM_ACCESS_MODES,
-  normalizeTelegramAccessPolicy,
 } from './config-store.mjs';
 
 export const TELEGRAM_COMMAND_MENU = Object.freeze([
   { command: 'new', description: '开启一个全新会话' },
   { command: 'compact', description: '压缩当前会话的较早上下文' },
   { command: 'workspace', description: '切换工作区' },
+  { command: 'ws', description: '切换工作区' },
   { command: 'workspacelist', description: '列出工作区绝对路径' },
+  { command: 'workspaces', description: '列出工作区绝对路径' },
+  { command: 'wsl', description: '列出工作区绝对路径' },
   { command: 'sessionlist', description: '列出会话 ID 和标题' },
   { command: 'sessions', description: '列出会话 ID 和标题' },
   { command: 'session', description: '将当前聊天绑定到指定会话' },
@@ -139,11 +142,88 @@ function telegramFileSource(message, loadFile) {
   };
 }
 
+function telegramReplyAttachment(kind, file) {
+  if (!file || typeof file !== 'object') return null;
+  const name = typeof file.file_name === 'string' && file.file_name
+    ? file.file_name : undefined;
+  return { kind, ...(name ? { name } : {}) };
+}
+
+function telegramReplyAttachments(message) {
+  const attachments = [];
+  if (Array.isArray(message?.photo) && message.photo.length > 0) {
+    const largest = message.photo.reduce((best, candidate) => (
+      photoScore(candidate) > photoScore(best) ? candidate : best
+    ));
+    attachments.push(telegramReplyAttachment('image', largest));
+  } else if (message?.document) {
+    attachments.push(telegramReplyAttachment(
+      imageTypeForDocument(message.document) ? 'image' : 'file',
+      message.document,
+    ));
+  }
+  for (const [field, kind] of [
+    ['audio', 'audio'],
+    ['voice', 'audio'],
+    ['video', 'video'],
+    ['video_note', 'video'],
+    ['animation', 'video'],
+  ]) {
+    if (message?.[field]) attachments.push(telegramReplyAttachment(kind, message[field]));
+  }
+  if (message?.sticker) {
+    attachments.push(telegramReplyAttachment(
+      message.sticker.is_video === true ? 'video' : 'image',
+      message.sticker,
+    ));
+  }
+  return attachments.filter(Boolean);
+}
+
+function telegramReplyReference(message, { quote, loadReplyContent } = {}) {
+  if ((!message || typeof message !== 'object')
+    && (!quote || typeof quote !== 'object')) return undefined;
+  const authorId = message?.from?.id === undefined ? undefined : String(message.from.id);
+  const authorName = [message?.from?.first_name, message?.from?.last_name]
+    .filter((value) => typeof value === 'string' && value.trim())
+    .map((value) => value.trim()).join(' ') || (
+      typeof message?.from?.username === 'string' && message.from.username
+        ? message.from.username : undefined
+    );
+  const content = typeof message?.text === 'string'
+    ? message.text : typeof message?.caption === 'string'
+      ? message.caption : typeof quote?.text === 'string' ? quote.text : '';
+  const attachments = telegramReplyAttachments(message);
+  const messageId = Number.isSafeInteger(message?.message_id)
+    ? String(message.message_id) : undefined;
+  const createdAt = Number.isSafeInteger(message?.date) && message.date >= 0
+    ? message.date * 1_000 : undefined;
+  const load = !content.trim() && attachments.length === 0
+    && typeof loadReplyContent === 'function'
+    ? ({ signal } = {}) => loadReplyContent({
+        ...(messageId ? { messageId } : {}),
+        ...(createdAt === undefined ? {} : { createdAt }),
+      }, { signal })
+    : null;
+  return {
+    ...(messageId ? { messageId } : {}),
+    ...(authorId ? { authorId } : {}),
+    ...(authorName ? { authorName } : {}),
+    ...(content.trim() ? { content } : {}),
+    ...(attachments.length > 0 ? { attachments } : {}),
+    ...(load ? { load } : {}),
+    ...(!content.trim() && attachments.length === 0 && !load
+      ? { unavailableReason: 'not-delivered' }
+      : {}),
+  };
+}
+
 export function normalizeTelegramUpdate(update, {
   botId,
   username,
   loadFile = async () => { throw new Error('Telegram file downloader is unavailable'); },
   loadFileStream = loadFile,
+  loadReplyContent,
 }) {
   const message = update?.message;
   const chatId = message?.chat?.id;
@@ -160,6 +240,21 @@ export function normalizeTelegramUpdate(update, {
     ? message.message_thread_id : undefined;
   const image = telegramImageSource(message, loadFile);
   const file = telegramFileSource(message, loadFileStream);
+  const conversationId = messageThreadId === undefined
+    ? String(chatId) : `${chatId}:${messageThreadId}`;
+  const key = `${direct ? 'direct' : 'group'}:${conversationId}`;
+  const replyTo = telegramReplyReference(
+    message.reply_to_message ?? message.external_reply,
+    {
+      quote: message.quote,
+      ...(typeof loadReplyContent === 'function' ? {
+        loadReplyContent: (reference, options) => loadReplyContent({
+          conversationKey: key,
+          ...reference,
+        }, options),
+      } : {}),
+    },
+  );
   return {
     messageId: String(update.update_id),
     senderId: String(senderId),
@@ -167,15 +262,18 @@ export function normalizeTelegramUpdate(update, {
       senderName: [message.from?.first_name, message.from?.last_name]
         .filter((value) => typeof value === 'string' && value.trim())
         .map((value) => value.trim()).join(' ') || message.from?.username,
+      conversationTitle: direct ? undefined : message.chat?.title,
+      chatId: String(chatId),
+      threadId: messageThreadId === undefined ? undefined : String(messageThreadId),
     }),
     senderIsBot: message.from?.is_bot === true,
     kind: direct ? 'direct' : 'group',
-    conversationId: messageThreadId === undefined
-      ? String(chatId) : `${chatId}:${messageThreadId}`,
+    conversationId,
     content: withoutBotMention(message.text ?? message.caption ?? '', username),
     plainText: typeof message.text === 'string',
     images: image ? [image] : [],
     files: file ? [file] : [],
+    ...(replyTo ? { replyTo } : {}),
     addressed,
     reactionTarget: { chatId, messageId },
     replyTarget: {
@@ -669,12 +767,11 @@ export class TelegramRuntime {
   #harness;
   #state;
   #contextEnhancement;
+  #accessPolicy;
   #logger;
   #replyTimeoutMs;
   #createApi;
   #createHttpTransport;
-  #accessMode;
-  #allowedPrivateUserIds;
   #status = createTelegramRuntimeStatus();
   #httpTransport = null;
   #api = null;
@@ -689,6 +786,7 @@ export class TelegramRuntime {
     harness,
     state,
     contextEnhancement,
+    accessPolicy,
     logger = console,
     replyTimeoutMs = 600_000,
     createApi = (options) => new TelegramApi(options),
@@ -702,13 +800,11 @@ export class TelegramRuntime {
     this.#harness = harness;
     this.#state = state;
     this.#contextEnhancement = contextEnhancement;
+    this.#accessPolicy = accessPolicy;
     this.#logger = logger;
     this.#replyTimeoutMs = replyTimeoutMs;
     this.#createApi = createApi;
     this.#createHttpTransport = createHttpTransport;
-    const accessPolicy = normalizeTelegramAccessPolicy(config);
-    this.#accessMode = accessPolicy.accessMode;
-    this.#allowedPrivateUserIds = new Set(accessPolicy.allowedUsers);
   }
 
   get status() {
@@ -805,6 +901,7 @@ export class TelegramRuntime {
         harness: this.#harness,
         state: this.#state,
         contextEnhancement: this.#contextEnhancement,
+        accessPolicy: this.#accessPolicy,
         status: this.#status,
         logger: this.#logger,
         replyTimeoutMs: this.#replyTimeoutMs,
@@ -840,6 +937,21 @@ export class TelegramRuntime {
     }
   }
 
+  async #loadReplyContent(reference, { signal } = {}) {
+    const key = typeof reference?.conversationKey === 'string'
+      ? reference.conversationKey.trim() : '';
+    const quotedAt = Number(reference?.createdAt);
+    if (!key || !Number.isFinite(quotedAt)) {
+      return { unavailableReason: 'not-delivered' };
+    }
+    const sessionId = this.#state.sessionFor(key);
+    const session = typeof sessionId === 'string' && sessionId
+      ? this.#harness.workspaceSession?.(sessionId)
+      : null;
+    const text = await recoverAssistantTextByTimestamp({ session, quotedAt, signal });
+    return text ? { content: text } : { unavailableReason: 'not-delivered' };
+  }
+
   async #poll(initialCursor, signal) {
     let cursor = initialCursor;
     while (!signal.aborted) {
@@ -864,11 +976,9 @@ export class TelegramRuntime {
           username: this.#config.username,
           loadFile: (fileId, options) => this.#api.downloadFile({ fileId, ...options }),
           loadFileStream: (fileId, options) => this.#api.downloadFileStream({ fileId, ...options }),
+          loadReplyContent: (reference, options) => this.#loadReplyContent(reference, options),
         });
-        if (message && telegramInboundAllowed(message, {
-          accessMode: this.#accessMode,
-          allowedPrivateUserIds: this.#allowedPrivateUserIds,
-        })) {
+        if (message) {
           void this.#bridge.accept(message, { contextSnapshot }).catch((error) => {
             if (signal.aborted) return;
             this.#logger.error?.(
@@ -876,9 +986,6 @@ export class TelegramRuntime {
               error,
             );
           });
-        } else if (message) {
-          this.#status.messagesRejected += 1;
-          this.#status.lastRejectedAt = new Date().toISOString();
         }
         cursor = update.update_id + 1;
         await this.#state.setCursor(cursor);

@@ -17,6 +17,10 @@ import {
   OutboundArtifactRegistry,
   createOutboundArtifactTool,
 } from '../../../src/channels/shared/semantic/artifact.mjs';
+import {
+  COMMAND_PERMISSION_DENIED_MESSAGE,
+  directAccessPolicy,
+} from '../access-policy-fixture.mjs';
 
 const PNG_1X1 = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
@@ -276,6 +280,55 @@ function testClient() {
     },
   };
 }
+
+test('Enterprise WeChat maps its native quote snapshot without changing current content', () => {
+  const inbound = wecomInboundMessage(frame({
+    msgid: 'wecom-quote-normalize',
+    text: { content: '继续分析' },
+    quote: {
+      msgtype: 'mixed',
+      mixed: { msg_item: [
+        { msgtype: 'text', text: { content: '被引用的结论' } },
+        { msgtype: 'image', image: { url: 'https://wecom.example/quoted-image' } },
+      ] },
+    },
+  }), {});
+
+  assert.equal(inbound.content, '继续分析');
+  assert.deepEqual(inbound.replyTo, {
+    content: '被引用的结论',
+    attachments: [{ kind: 'image' }],
+  });
+});
+
+test('Enterprise WeChat sends quote context to Harness but does not execute quoted commands', async () => {
+  const transport = testClient();
+  const fixture = state();
+  let prompt;
+  let clears = 0;
+  fixture.clearSession = async () => { clears += 1; };
+  const bridge = new WecomHarnessBridge({
+    client: transport.client,
+    generateStreamId: () => 'stream-quote',
+    harness: {
+      sessionExists: async () => true,
+      ask: async (_sessionId, content) => { prompt = content; return '已处理'; },
+    },
+    state: fixture,
+  });
+
+  await bridge.accept(frame({
+    msgid: 'wecom-quote-prompt',
+    text: { content: '这条指令是什么意思？' },
+    quote: { msgtype: 'text', text: { content: '/new' } },
+  }));
+
+  assert.equal(clears, 0);
+  assert.equal(Array.isArray(prompt), true);
+  assert.match(prompt[0].text, /<dsh_im_reply_to>/);
+  assert.match(prompt[0].text, /"content":"\/new"/);
+  assert.deepEqual(prompt.at(-1), { type: 'text', text: '这条指令是什么意思？' });
+});
 
 async function committedArtifact(t, fileName, content, suffix) {
   const workspace = await mkdtemp(join(tmpdir(), `dsh-im-wecom-artifact-${suffix}-`));
@@ -705,6 +758,78 @@ test('Enterprise WeChat exposes native file callbacks through the SDK downloader
     url: 'https://wecom.example/encrypted-file',
     aeskey: 'file-specific-key',
   }]);
+});
+
+test('Enterprise WeChat applies the unified access policy before attachments or Harness work', async () => {
+  const transport = testClient();
+  let downloads = 0;
+  const harnessCalls = [];
+  const accessPolicy = directAccessPolicy({
+    users: [{ id: 'member-1', canExecuteCommands: false }],
+    privilegedIds: ['owner-1'],
+  });
+  transport.client.downloadFile = async () => {
+    downloads += 1;
+    return { buffer: PNG_1X1, filename: 'blocked.png' };
+  };
+  const bridge = new WecomHarnessBridge({
+    client: transport.client,
+    generateStreamId: (() => {
+      let sequence = 0;
+      return () => `policy-stream-${++sequence}`;
+    })(),
+    accessPolicy,
+    harness: {
+      sessionExists: async (sessionId) => {
+        harnessCalls.push(['sessionExists', sessionId]);
+        return true;
+      },
+      ask: async (sessionId, prompt) => {
+        harnessCalls.push(['ask', sessionId, prompt]);
+        return '白名单消息已处理';
+      },
+    },
+    state: state(),
+  });
+
+  await bridge.accept(frame({
+    msgid: 'policy-blocked-image',
+    from: { userid: 'blocked-1' },
+    msgtype: 'image',
+    text: undefined,
+    image: { url: 'https://wecom.example/blocked', aeskey: 'blocked-key' },
+  }));
+  assert.equal(downloads, 0);
+  assert.deepEqual(harnessCalls, []);
+  assert.deepEqual(transport.streamed, []);
+  assert.deepEqual(transport.active, []);
+
+  await bridge.accept(frame({
+    msgid: 'policy-member-text',
+    text: { content: '普通消息' },
+  }));
+  assert.equal(harnessCalls.some(([operation]) => operation === 'ask'), true);
+  assert.equal(transport.streamed.at(-1).content, streamedAnswer('白名单消息已处理'));
+
+  const callsBeforeDeniedCommand = harnessCalls.length;
+  const repliesBeforeDeniedCommand = transport.streamed.length;
+  await bridge.accept(frame({
+    msgid: 'policy-member-command',
+    text: { content: '/help' },
+  }));
+  assert.equal(harnessCalls.length, callsBeforeDeniedCommand);
+  assert.deepEqual(transport.streamed.slice(repliesBeforeDeniedCommand).map(({ content, finish }) => ({
+    content,
+    finish,
+  })), [{ content: COMMAND_PERMISSION_DENIED_MESSAGE, finish: true }]);
+
+  accessPolicy.getSettings().direct.allowlist.users = [];
+  await bridge.accept(frame({
+    msgid: 'policy-owner-command',
+    from: { userid: 'owner-1' },
+    text: { content: '/help' },
+  }));
+  assert.match(transport.streamed.at(-1).content, /\/help/);
 });
 
 test('Enterprise WeChat bridge hands its prefetched native file to the current Harness turn', async () => {
@@ -2088,6 +2213,11 @@ test('Enterprise WeChat batch input collects ten texts and submits one ordered H
   });
 
   await bridge.accept(frame({ msgid: 'batch-start', text: { content: '/batch' } }));
+  await bridge.accept(frame({
+    msgid: 'batch-quote',
+    text: { content: '企微引用不能收录' },
+    quote: { msgtype: 'text', text: { content: '被引用内容' } },
+  }));
   for (let index = 1; index <= 10; index += 1) {
     await bridge.accept(frame({
       msgid: `batch-item-${index}`,
@@ -2097,6 +2227,7 @@ test('Enterprise WeChat batch input collects ten texts and submits one ordered H
   await bridge.accept(frame({ msgid: 'batch-overflow', text: { content: '不会收录' } }));
 
   assert.equal(prompts.length, 0);
+  assert.equal(transport.streamed.some(({ content }) => /引用消息.*未收录/s.test(content)), true);
   assert.equal(transport.streamed.some(({ content }) => /10\/10.*已满/.test(content)), true);
   assert.equal(transport.streamed.some(({ content }) => /这条消息未收录/.test(content)), true);
 
@@ -2104,7 +2235,7 @@ test('Enterprise WeChat batch input collects ten texts and submits one ordered H
   assert.equal(prompts.length, 1);
   assert.match(prompts[0], /\[消息 1\]\n企微内容 1/);
   assert.match(prompts[0], /\[消息 10\]\n企微内容 10/);
-  assert.doesNotMatch(prompts[0], /不会收录/);
+  assert.doesNotMatch(prompts[0], /企微引用不能收录|不会收录/);
   assert.equal(transport.streamed.at(-1).content, streamedAnswer('批量完成'));
 });
 

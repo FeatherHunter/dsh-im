@@ -9,6 +9,7 @@ import {
   weixinInboundMessage,
   WeixinHarnessBridge,
 } from '../../../src/channels/weixin/weixin-bridge.mjs';
+import { WeixinStateStore } from '../../../src/channels/weixin/state-store.mjs';
 import { connectionTestTarget } from '../../../src/channels/shared/connection-test.mjs';
 import {
   OUTBOUND_ARTIFACT_TOOL,
@@ -17,6 +18,10 @@ import {
   releaseOutboundArtifact,
 } from '../../../src/channels/shared/semantic/artifact.mjs';
 import { defaultImagePrompt } from '../../../src/channels/shared/image-prompt.mjs';
+import {
+  COMMAND_PERMISSION_DENIED_MESSAGE,
+  directAccessPolicy,
+} from '../access-policy-fixture.mjs';
 
 function deferred() {
   let resolve;
@@ -61,6 +66,157 @@ function message(id, text, overrides = {}) {
     ...overrides,
   };
 }
+
+test('Weixin bridge sends ref_msg context to Harness but does not execute quoted commands', async () => {
+  const fixture = stateFixture();
+  fixture.sessions.set('p2p:owner-user', 'session-quote');
+  let clears = 0;
+  let prompt;
+  fixture.state.clearSession = async () => { clears += 1; };
+  const bridge = new WeixinHarnessBridge({
+    api: { sendText: async () => ({ messageId: 'weixin-quote-answer' }) },
+    baseUrl: 'https://ilinkai.weixin.qq.com/',
+    token: 'host-token',
+    ownerUserId: 'owner-user',
+    harness: {
+      sessionExists: async () => true,
+      ask: async (_sessionId, content) => { prompt = content; return '已处理'; },
+    },
+    state: fixture.state,
+  });
+
+  await bridge.accept(message('weixin-quote-prompt', '这条指令是什么意思？', {
+    item_list: [{
+      type: 1,
+      text_item: { text: '这条指令是什么意思？' },
+      ref_msg: {
+        message_item: {
+          type: 1,
+          msg_id: 'quoted-command',
+          text_item: { text: '/new' },
+        },
+      },
+    }],
+  }));
+
+  assert.equal(clears, 0);
+  assert.equal(Array.isArray(prompt), true);
+  assert.match(prompt[0].text, /<dsh_im_reply_to>/);
+  assert.match(prompt[0].text, /"content":"\/new"/);
+  assert.deepEqual(prompt.at(-1), { type: 'text', text: '这条指令是什么意思？' });
+});
+
+test('Weixin bridge restores a metadata-only bot quote from its recent outbound index', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'dsh-weixin-quote-index-'));
+  const state = await new WeixinStateStore(join(root, 'state.json')).load();
+  await state.setSession('p2p:owner-user', 'session-quote-index');
+  const prompts = [];
+  let sends = 0;
+  const bridge = new WeixinHarnessBridge({
+    api: {
+      sendText: async () => ({ messageId: `outbound-${++sends}` }),
+    },
+    baseUrl: 'https://ilinkai.weixin.qq.com/',
+    token: 'host-token',
+    ownerUserId: 'owner-user',
+    harness: {
+      sessionExists: async () => true,
+      ask: async (_sessionId, content) => {
+        prompts.push(content);
+        return prompts.length === 1 ? 'deepseek-v4-flash' : '已识别引用';
+      },
+    },
+    state,
+  });
+
+  await bridge.accept(message('weixin-original-question', '这是什么模型？'));
+  const remembered = state.snapshot().recentOutboundMessages.at(-1);
+  assert.equal(remembered.text, 'deepseek-v4-flash');
+
+  await bridge.accept(message('weixin-metadata-quote', '这里说的是什么模型？', {
+    item_list: [{
+      type: 1,
+      text_item: { text: '这里说的是什么模型？' },
+      ref_msg: {
+        message_item: {
+          type: 8,
+          create_time_ms: remembered.sentAt,
+          update_time_ms: remembered.completedAt,
+        },
+      },
+    }],
+  }));
+
+  assert.match(prompts[1][0].text, /<dsh_im_reply_to>/);
+  assert.match(prompts[1][0].text, /"content":"deepseek-v4-flash"/);
+  await rm(root, { recursive: true, force: true });
+});
+
+test('Weixin bridge recovers a pre-index bot quote from bounded Session history', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'dsh-weixin-quote-history-'));
+  const state = await new WeixinStateStore(join(root, 'state.json')).load();
+  await state.setSession('p2p:owner-user', 'session-quote-history');
+  const quotedAt = Date.now() - 2_000;
+  const quotedMessageId = ((BigInt(quotedAt) << 22n) | 456n).toString();
+  const prompts = [];
+  const historyReads = [];
+  const session = {
+    sessionExists: async () => true,
+    readHistory: async (options) => {
+      historyReads.push(options);
+      return {
+        events: [{ event: {
+          type: 'assistant/message',
+          seq: 10,
+          time: quotedAt - 7_400,
+          data: {
+            turn: 1,
+            message: {
+              role: 'assistant',
+              content: [{ type: 'text', text: 'DeepSeek V4 Flash' }],
+            },
+          },
+        } }, { event: {
+          type: 'turn/end',
+          seq: 11,
+          time: quotedAt - 7_399,
+          data: { turn: 1, reason: { kind: 'completed' } },
+        } }],
+        hasMore: false,
+      };
+    },
+    ask: async (content) => {
+      prompts.push(content);
+      return '已识别旧引用';
+    },
+  };
+  const bridge = new WeixinHarnessBridge({
+    api: { sendText: async () => ({ messageId: 'history-answer' }) },
+    baseUrl: 'https://ilinkai.weixin.qq.com/',
+    token: 'host-token',
+    ownerUserId: 'owner-user',
+    harness: { workspaceSession: () => session },
+    state,
+  });
+
+  await bridge.accept(message('weixin-history-quote', '说的是什么模型？', {
+    item_list: [{
+      type: 1,
+      text_item: { text: '说的是什么模型？' },
+      ref_msg: {
+        message_item: { type: 7, msg_id: quotedMessageId },
+      },
+    }],
+  }));
+
+  assert.equal(historyReads.length, 1);
+  assert.match(prompts[0][0].text, /"content":"DeepSeek V4 Flash"/);
+  assert.doesNotMatch(prompts[0][0].text, /unavailableReason/);
+  assert.equal(state.recentOutboundTextFor({
+    toUserId: 'owner-user', messageId: quotedMessageId,
+  }), 'DeepSeek V4 Flash');
+  await rm(root, { recursive: true, force: true });
+});
 
 function stateFixture() {
   const sessions = new Map();
@@ -650,6 +806,68 @@ test('Weixin authorizes the sender before resolving encrypted image references',
 
   assert.equal(imageExtractions, 0);
   assert.equal(asks, 0);
+});
+
+test('Weixin applies the unified access policy before attachments or Harness work', async () => {
+  const fixture = stateFixture();
+  fixture.sessions.set('p2p:member-user', 'session-member');
+  let imageExtractions = 0;
+  const harnessCalls = [];
+  const sent = [];
+  const accessPolicy = directAccessPolicy({
+    users: [{ id: 'member-user', canExecuteCommands: false }],
+    privilegedIds: ['owner-user'],
+  });
+  const bridge = new WeixinHarnessBridge({
+    api: {
+      inboundImages: (value) => {
+        imageExtractions += 1;
+        return value?.item_list?.some((item) => item?.image_item) ? [{ data: PNG_BYTES }] : [];
+      },
+      sendText: async (request) => sent.push(request.text),
+    },
+    baseUrl: 'https://ilinkai.weixin.qq.com/',
+    token: 'host-token',
+    ownerUserId: 'owner-user',
+    accessPolicy,
+    harness: {
+      sessionExists: async (sessionId) => {
+        harnessCalls.push(['sessionExists', sessionId]);
+        return true;
+      },
+      ask: async (sessionId, prompt) => {
+        harnessCalls.push(['ask', sessionId, prompt]);
+        return '白名单消息已处理';
+      },
+    },
+    state: fixture.state,
+  });
+
+  await bridge.accept(message('policy-blocked-image', '', {
+    from_user_id: 'blocked-user',
+    item_list: [{ type: 2, image_item: { media: {} } }],
+  }));
+  assert.equal(imageExtractions, 0);
+  assert.deepEqual(harnessCalls, []);
+  assert.deepEqual(sent, []);
+
+  await bridge.accept(message('policy-member-text', '普通消息', {
+    from_user_id: 'member-user',
+  }));
+  assert.equal(harnessCalls.some(([operation]) => operation === 'ask'), true);
+  assert.deepEqual(sent, ['白名单消息已处理']);
+
+  const callsBeforeDeniedCommand = harnessCalls.length;
+  const repliesBeforeDeniedCommand = sent.length;
+  await bridge.accept(message('policy-member-command', '/help', {
+    from_user_id: 'member-user',
+  }));
+  assert.equal(harnessCalls.length, callsBeforeDeniedCommand);
+  assert.deepEqual(sent.slice(repliesBeforeDeniedCommand), [COMMAND_PERMISSION_DENIED_MESSAGE]);
+
+  accessPolicy.getSettings().direct.allowlist.users = [];
+  await bridge.accept(message('policy-owner-command', '/help'));
+  assert.match(sent.at(-1), /\/help/);
 });
 
 test('Weixin returns a specific retry message when encrypted image loading fails', async () => {
@@ -2152,6 +2370,13 @@ test('Weixin batch input collects up to ten native text messages and submits one
   });
 
   await bridge.accept(message('batch-start', '/batch'));
+  await bridge.accept(message('batch-quote', '微信引用不能收录', {
+    item_list: [{
+      type: 1,
+      text_item: { text: '微信引用不能收录' },
+      ref_msg: { message_item: { type: 1, text_item: { text: '被引用内容' } } },
+    }],
+  }));
   await bridge.accept(message('batch-voice', '', {
     item_list: [{ type: 3, voice_item: { text: '语音转写不能收录' } }],
   }));
@@ -2174,7 +2399,7 @@ test('Weixin batch input collects up to ten native text messages and submits one
   assert.equal(prompts[0].sessionId, 'session-batch');
   assert.match(prompts[0].prompt, /\[消息 1\]\n内容 1/);
   assert.match(prompts[0].prompt, /\[消息 10\]\n内容 10/);
-  assert.doesNotMatch(prompts[0].prompt, /语音转写不能收录|不会收录/);
+  assert.doesNotMatch(prompts[0].prompt, /微信引用不能收录|语音转写不能收录|不会收录/);
   assert.equal(sent.at(-1).text, '批量完成');
 
   await bridge.accept(message('after-batch', '恢复普通聊天'));

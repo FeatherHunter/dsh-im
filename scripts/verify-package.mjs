@@ -160,14 +160,21 @@ if ((client.match(/\.slots\.inject\(\s*["']settings\.section["']/gu) ?? []).leng
 if (client.includes('settings.plugins.tab') || clientSources.includes('settings.plugins.tab')) {
   throw new Error('client source or bundle still contains the legacy Plugins-tab settings entry');
 }
-// Connections still have no channel-enable toggle. Only the shared context
-// editor owns checkable inputs: two scope switches and one mapped field input.
+// Connections still have no channel-enable toggle. Checkable inputs are owned
+// only by the shared context editor and the saved-target Session sync row.
+// The context editor contains one switch template and one mapped field-input
+// template; the delivery target adds one ordinary checkbox template.
 const contextEditorSource = await readFile(resolve(root, 'plugin-src/client/context-enhancement.js'), 'utf8');
-const otherClientSources = clientSources.replace(contextEditorSource, '');
+const deliverySettingsSource = await readFile(resolve(root, 'plugin-src/client/delivery-settings.js'), 'utf8');
+const otherClientSources = clientSources
+  .replace(contextEditorSource, '')
+  .replace(deliverySettingsSource, '');
 if (/role:\s*["']switch|type:\s*["']checkbox/.test(otherClientSources)
-  || (client.match(/role:\s*["']switch["']/g) ?? []).length !== 2
+  || (deliverySettingsSource.match(/type:\s*["']checkbox["']/g) ?? []).length !== 1
+  || /role:\s*["']switch["']/u.test(deliverySettingsSource)
+  || (client.match(/role:\s*["']switch["']/g) ?? []).length !== 1
   || (client.match(/type:\s*["']checkbox["']/g) ?? []).length !== 3) {
-  throw new Error('checkable inputs must be limited to the context-enhancement editor');
+  throw new Error('checkable inputs must be limited to context enhancement and Session sync');
 }
 for (const marker of ['bot.context-enhancement.set', '<dsh_im_source>', '<dsh_im_source_guidance>']) {
   if (!host.includes(marker) || !client.includes(marker)) {

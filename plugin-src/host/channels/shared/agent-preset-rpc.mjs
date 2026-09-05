@@ -1,4 +1,4 @@
-import { AGENT_PRESET_ID } from '../../../../src/channels/shared/agent-preset.mjs';
+import { normalizeAgentPresetId } from '../../../../src/channels/shared/agent-preset.mjs';
 
 export const SET_AGENT_PRESET_ENDPOINT = 'bot.preset.set';
 
@@ -12,7 +12,9 @@ export function validAgentPresetPayload(payload) {
     && typeof payload.botId === 'string'
     && /^[A-Za-z0-9_-]{1,128}$/.test(payload.botId)
     && (payload.agentPreset === null
-      || (typeof payload.agentPreset === 'string' && AGENT_PRESET_ID.test(payload.agentPreset)));
+      // Case-insensitive + legacy fallback (`PTC` -> `ptc`, `code` -> `standard`)
+      // so uppercase/legacy selections normalize instead of being rejected.
+      || (typeof payload.agentPreset === 'string' && normalizeAgentPresetId(payload.agentPreset) !== null));
 }
 
 export function publicAgentPresetError(error) {

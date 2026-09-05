@@ -4,9 +4,11 @@ import {
   publicConnectionTestResult,
 } from '../../../../src/channels/shared/connection-test.mjs';
 import { SET_CONTEXT_ENHANCEMENT_ENDPOINT, validContextEnhancementPayload } from '../shared/context-enhancement-rpc.mjs';
+import { SET_ACCESS_POLICY_ENDPOINT, validAccessPolicyPayload } from '../shared/access-policy-rpc.mjs';
 import { resolveRpcAuthority } from '../../rpc-authority.mjs';
 import { publicWorkspaceError, SET_WORKSPACE_ENDPOINT, validWorkspacePayload } from '../shared/workspace-rpc.mjs';
 import { SET_AGENT_PRESET_ENDPOINT, validAgentPresetPayload } from '../shared/agent-preset-rpc.mjs';
+import { SET_MODEL_ENDPOINT, validModelPayload } from '../shared/model-setting-rpc.mjs';
 
 export const QQ_RPC_CHANNEL = '/qq';
 export const QQ_ENDPOINTS = Object.freeze({
@@ -18,8 +20,10 @@ export const QQ_ENDPOINTS = Object.freeze({
   reconnectBot: 'bot.reconnect',
   deleteBot: 'bot.delete',
   setWorkspace: SET_WORKSPACE_ENDPOINT,
+  setModel: SET_MODEL_ENDPOINT,
   setAgentPreset: SET_AGENT_PRESET_ENDPOINT,
   setContextEnhancement: SET_CONTEXT_ENHANCEMENT_ENDPOINT,
+  setAccessPolicy: SET_ACCESS_POLICY_ENDPOINT,
 });
 export const QQ_RPC_ENDPOINTS = Object.freeze(Object.values(QQ_ENDPOINTS));
 
@@ -74,6 +78,9 @@ function payloadFailure(endpoint, payload) {
     return validWorkspacePayload(payload)
       ? null : '请输入工作区绝对路径。';
   }
+  if (endpoint === QQ_ENDPOINTS.setModel) {
+    return validModelPayload(payload) ? null : '请选择有效模型。';
+  }
   if (endpoint === QQ_ENDPOINTS.setAgentPreset) {
     return validAgentPresetPayload(payload)
       ? null : '请选择 Agent Preset。';
@@ -81,6 +88,10 @@ function payloadFailure(endpoint, payload) {
   if (endpoint === QQ_ENDPOINTS.setContextEnhancement) {
     return validContextEnhancementPayload(payload)
       ? null : '请提交有效的上下文增强设置。';
+  }
+  if (endpoint === QQ_ENDPOINTS.setAccessPolicy) {
+    return validAccessPolicyPayload(payload)
+      ? null : '请提交有效的访问设置。';
   }
   return 'Unknown QQ endpoint.';
 }
@@ -177,10 +188,21 @@ export function createQqRpcHandler(controller, { encodeQr = qrDataUrl } = {}) {
           await controller.updateWorkspace(payload.botId, payload.workspace),
           cachedEncode,
         );
+      } else if (endpoint === QQ_ENDPOINTS.setModel) {
+        if (typeof controller.updateModel !== 'function') throw new Error('Model update is unavailable');
+        value = await publicStatus(
+          await controller.updateModel(payload.botId, payload.model),
+          cachedEncode,
+        );
       } else if (endpoint === QQ_ENDPOINTS.setContextEnhancement) {
         if (typeof controller.updateContextEnhancement !== 'function') throw new Error('Context enhancement update is unavailable');
         value = await controller.updateContextEnhancement(
           payload.botId, payload.config, (status) => publicStatus(status, cachedEncode),
+        );
+      } else if (endpoint === QQ_ENDPOINTS.setAccessPolicy) {
+        if (typeof controller.updateAccessPolicy !== 'function') throw new Error('Access policy update is unavailable');
+        value = await controller.updateAccessPolicy(
+          payload.botId, payload.policy, (status) => publicStatus(status, cachedEncode),
         );
       } else if (endpoint === QQ_ENDPOINTS.setAgentPreset) {
         if (typeof controller.updateAgentPreset !== 'function') throw new Error('Agent preset update is unavailable');

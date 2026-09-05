@@ -8,7 +8,6 @@ import {
   FEISHU_REGISTRATION_OPERATIONS,
   formatRemaining,
   normalizeBotsSnapshot,
-  normalizeGroupResponseMode,
   normalizePollResult,
   normalizeProvisioning,
   presentError,
@@ -22,6 +21,11 @@ import {
   AgentPresetEditor,
   EMPTY_AGENT_PRESET_CATALOG,
 } from "../../agent-preset.js";
+import {
+  EMPTY_MODEL_CATALOG,
+  ModelCatalogContext,
+  ModelEditor,
+} from "../../model-setting.js";
 import { useWorkspaceSnapshotFence } from "../../workspace-snapshot-fence.js";
 import {
   BotSettingsButton,
@@ -459,89 +463,6 @@ function RemoveConfirmation({ bot, busy, onConfirm, onCancel }) {
   );
 }
 
-function GroupResponseModeEditor({
-  value,
-  permissionGranted = false,
-  disabled = false,
-  authorizationDisabled = false,
-  onSave,
-  onAuthorize,
-}) {
-  const current = normalizeGroupResponseMode(value);
-  const [saving, setSaving] = React.useState(false);
-  const [authorizing, setAuthorizing] = React.useState(false);
-  const [error, setError] = React.useState(null);
-
-  const change = async (event) => {
-    const next = normalizeGroupResponseMode(event.target.value);
-    if (next === current || saving || disabled) return;
-    setSaving(true);
-    setError(null);
-    try {
-      await onSave?.(next);
-    } catch (cause) {
-      setError(cause?.message ?? "群聊响应方式修改失败，请重试。");
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const authorize = async () => {
-    if (current !== "all" || saving || authorizing || disabled || authorizationDisabled) return;
-    setAuthorizing(true);
-    setError(null);
-    try {
-      await onAuthorize?.();
-    } catch (cause) {
-      setError(cause?.message ?? "群消息权限授权失败，请重试。");
-    } finally {
-      setAuthorizing(false);
-    }
-  };
-
-  return h("div", { className: "bxf-responseMode dim-responseMode" },
-    h("div", { className: "bxf-responseModeHeader dim-responseModeHeader" },
-      h("span", null, "群聊响应方式"),
-      saving || authorizing
-        ? h("span", { className: "bxf-responseModeStatus dim-responseModeStatus" },
-            saving ? "保存中…" : "正在准备授权…")
-        : null),
-    h("select", {
-      className: "bxf-responseModeSelect dim-responseModeSelect",
-      value: current,
-      disabled: disabled || saving,
-      "aria-label": "群聊响应方式",
-      onChange: (event) => { void change(event); },
-    },
-      h("option", { value: "mention" }, "仅在 @机器人时响应（推荐）"),
-      h("option", { value: "all" }, "响应所有群消息"),
-    ),
-    h("small", { className: "bxf-responseModeHelp dim-responseModeHelp" },
-      current === "mention"
-        ? permissionGranted
-          ? "私聊始终响应；群聊仅处理明确 @当前机器人的消息。群消息权限已开通，再次切换无需授权。"
-          : "私聊始终响应；群聊仅处理明确 @当前机器人的消息。选择全部消息后会打开飞书官方授权流程。"
-        : permissionGranted
-          ? "已开通“获取群组中所有消息”权限（im:message.group_msg）；机器人会处理群聊中的所有可见消息。"
-          : "尚未确认“获取群组中所有消息”权限，请完成飞书授权。"),
-    current === "all"
-      ? h("div", { className: "bxf-responseModePermissionAction dim-responseModePermissionAction" },
-          h(Button, {
-            className: "bxf-responseModePermissionButton",
-            size: "small",
-            disabled: disabled || authorizationDisabled || saving || authorizing,
-            "aria-busy": authorizing ? "true" : undefined,
-            "aria-label": permissionGranted ? "重新授权群消息权限" : "授权群消息权限",
-            onClick: () => { void authorize(); },
-          }, authorizing ? "正在准备…" : permissionGranted ? "重新授权" : "去授权"))
-      : null,
-    error ? h("p", {
-      className: "bxf-responseModeError dim-responseModeError",
-      role: "alert",
-    }, error) : null,
-  );
-}
-
 export function BotCard({
   connection,
   busy,
@@ -554,10 +475,9 @@ export function BotCard({
   onReconnect,
   onRepairCallback,
   onWorkspaceSave,
+  onModelSave,
   onAgentPresetSave,
   onContextEnhancementSave,
-  onGroupResponseModeSave,
-  onGroupMessagePermissionAuthorize,
   onRequestRemove,
   onConfirmRemove,
   onCancelRemove,
@@ -609,12 +529,23 @@ export function BotCard({
             botId: connection.botId,
             botName: bot.name,
             connected,
+            accessPolicy: connection.accessPolicy,
+            channelSettings: {
+              groupResponseMode: connection.groupResponseMode,
+              groupTopicReply: connection.groupTopicReply,
+              groupMessagePermissionGranted: connection.groupMessagePermissionGranted,
+            },
           })),
       ),
       h(WorkspaceEditor, {
         workspace: connection.workspace,
         disabled: Boolean(busy),
         onSave: onWorkspaceSave,
+      }),
+      h(ModelEditor, {
+        model: connection.model,
+        disabled: Boolean(busy),
+        onSave: onModelSave,
       }),
       h(AgentPresetEditor, {
         agentPreset: connection.agentPreset,
@@ -625,14 +556,6 @@ export function BotCard({
         config: connection.contextEnhancement,
         disabled: Boolean(busy),
         onSave: onContextEnhancementSave,
-      }),
-      h(GroupResponseModeEditor, {
-        value: connection.groupResponseMode,
-        permissionGranted: connection.groupMessagePermissionGranted,
-        disabled: Boolean(busy),
-        authorizationDisabled: repairDisabled,
-        onSave: onGroupResponseModeSave,
-        onAuthorize: onGroupMessagePermissionAuthorize,
       }),
       provisionContent
         ? h("section", {
@@ -722,10 +645,9 @@ function BotList(props) {
           onReconnect: () => props.onReconnect(bot),
           onRepairCallback: () => props.onRepairCallback(bot),
           onWorkspaceSave: (workspace) => props.onWorkspaceSave(bot, workspace),
+          onModelSave: (model) => props.onModelSave(bot, model),
           onAgentPresetSave: (agentPreset) => props.onAgentPresetSave(bot, agentPreset),
           onContextEnhancementSave: (config) => props.onContextEnhancementSave(bot, config),
-          onGroupResponseModeSave: (groupResponseMode) => props.onGroupResponseModeSave(bot, groupResponseMode),
-          onGroupMessagePermissionAuthorize: () => props.onGroupMessagePermissionAuthorize(bot),
           onRequestRemove: () => props.onRequestRemove(bot),
           onConfirmRemove: () => props.onConfirmRemove(bot),
           onCancelRemove: props.onCancelRemove,
@@ -778,6 +700,7 @@ export function mergeFeishuSnapshotState(
     pageError: null,
     statusError: null,
     agentPresetCatalog: snapshot.agentPresetCatalog ?? current.agentPresetCatalog,
+    modelCatalog: snapshot.modelCatalog ?? current.modelCatalog,
   };
 }
 
@@ -791,6 +714,7 @@ export function FeishuSettingsTab({ rpcCall }) {
     pageError: null,
     statusError: null,
     agentPresetCatalog: EMPTY_AGENT_PRESET_CATALOG,
+    modelCatalog: EMPTY_MODEL_CATALOG,
   });
   const [pageBusy, setPageBusy] = React.useState(false);
   const [provisionBusy, setProvisionBusy] = React.useState(false);
@@ -1332,56 +1256,6 @@ export function FeishuSettingsTab({ rpcCall }) {
     }
   }, [invoke, loadStatus, mergeSnapshot, setBotBusy, setBotError, workspaceFence]);
 
-  const authorizeGroupMessages = React.useCallback(async (connection) => {
-    const { botId } = connection;
-    if (model.provisioning) {
-      throw new Error("请先完成当前飞书授权操作，再开通群消息权限。");
-    }
-    setRemoveTargetId(null);
-    setBotError(botId, null);
-    setTestNoticesByBot((current) => {
-      const next = { ...current };
-      delete next[botId];
-      return next;
-    });
-    await startProvisioning({
-      operation: GROUP_MESSAGE_PERMISSION_OPERATION,
-      bot: connection,
-    });
-  }, [model.provisioning, setBotError, startProvisioning]);
-
-  const saveGroupResponseMode = React.useCallback(async (connection, groupResponseMode) => {
-    const { botId } = connection;
-    if (groupResponseMode === "all" && connection.groupMessagePermissionGranted !== true) {
-      await authorizeGroupMessages(connection);
-      return;
-    }
-    const snapshotVersion = workspaceFence.beginMutation();
-    setBotBusy(botId, "group-response-mode");
-    setBotError(botId, null);
-    try {
-      const snapshot = normalizeBotsSnapshot(await invoke(
-        FEISHU_ENDPOINTS.setGroupResponseMode,
-        { botId, groupResponseMode },
-      ));
-      if (mountedRef.current && workspaceFence.canCommitMutation(snapshotVersion)) {
-        mergeSnapshot(snapshot);
-      }
-    } finally {
-      const shouldRefresh = workspaceFence.endMutation();
-      if (shouldRefresh && mountedRef.current) void loadStatus({ silent: true });
-      if (mountedRef.current) setBotBusy(botId, null);
-    }
-  }, [
-    invoke,
-    authorizeGroupMessages,
-    loadStatus,
-    mergeSnapshot,
-    setBotBusy,
-    setBotError,
-    workspaceFence,
-  ]);
-
   const requestRemove = React.useCallback((connection) => {
     setRemoveTargetId(connection.botId);
   }, []);
@@ -1489,7 +1363,9 @@ export function FeishuSettingsTab({ rpcCall }) {
     else removeButtonRefs.current.delete(botId);
   }, []);
 
-  return h(AgentPresetCatalogContext.Provider, {
+  return h(ModelCatalogContext.Provider, {
+    value: model.modelCatalog ?? EMPTY_MODEL_CATALOG,
+  }, h(AgentPresetCatalogContext.Provider, {
     value: model.agentPresetCatalog ?? EMPTY_AGENT_PRESET_CATALOG,
   }, h("section", { className: "bxf-page dim-channelPage", "aria-label": "飞书机器人设置" },
     h(Heading, {
@@ -1537,14 +1413,15 @@ export function FeishuSettingsTab({ rpcCall }) {
                   onReconnect: (bot) => void reconnectOneBot(bot),
                   onRepairCallback: repairCallback,
                   onWorkspaceSave: saveWorkspace,
+                  onModelSave: (connection, selectedModel) => saveBotSetting(
+                    connection, "model", FEISHU_ENDPOINTS.setModel, { model: selectedModel },
+                  ),
                   onAgentPresetSave: (connection, agentPreset) => saveBotSetting(
                     connection, "preset", FEISHU_ENDPOINTS.setAgentPreset, { agentPreset },
                   ),
                   onContextEnhancementSave: (connection, config) => saveBotSetting(
                     connection, "context-enhancement", FEISHU_ENDPOINTS.setContextEnhancement, { config },
                   ),
-                  onGroupResponseModeSave: saveGroupResponseMode,
-                  onGroupMessagePermissionAuthorize: authorizeGroupMessages,
                   onRequestRemove: requestRemove,
                   onConfirmRemove: (bot) => void confirmRemove(bot),
                   onCancelRemove: cancelRemove,
@@ -1553,5 +1430,5 @@ export function FeishuSettingsTab({ rpcCall }) {
                 })
               : null,
           ),
-  ));
+  )));
 }

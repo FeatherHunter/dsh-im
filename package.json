@@ -1,6 +1,6 @@
 {
   "name": "@feather_wch/dsh-im",
-  "version": "0.15.4",
+  "version": "0.15.5",
   "description": "鎶婁節绉?IM 鏈哄櫒浜哄拰鍏綉 AI Office 鎺ュ叆鏈満 DeepSeek Harness锛堟敮鎸侀涔︺€佸井淇°€侀拤閽夈€佷紒涓氬井淇°€丵Q銆丼lack銆乀elegram銆丏iscord銆乄hatsApp 鍜?AI Office锛夈€?Connect nine IM channels and a public AI Office to a local DeepSeek Harness. Fork of @xmanrui/dsh-im 鈥?Feishu HTML media fix (private/custom).",
   "keywords": [
     "deepseek-harness",
@@ -34,6 +34,14 @@
     {
       "name": "C3H3-AI",
       "url": "https://github.com/C3H3-AI"
+    },
+    {
+      "name": "divingleee",
+      "url": "https://github.com/divingleee"
+    },
+    {
+      "name": "Chan-0312",
+      "url": "https://github.com/Chan-0312"
     }
   ],
   "license": "MIT",
@@ -82,6 +90,18 @@
         "@deepseek-ai/dsh-client-locale"
       ],
       "platform": "web"
+    },
+    "compatibility": {
+      "dsh": "0.1.2-alpha.4 || 0.1.2-alpha.5 || 0.1.2-rc.1 || 0.1.3-alpha.1",
+      "dshReleases": {
+        "0.1.2-alpha.4": "compatible",
+        "0.1.2-alpha.5": "compatible",
+        "0.1.2-rc.1": "compatible",
+        "0.1.3-alpha.1": "compatible"
+      },
+      "profiles": [
+        "web"
+      ]
     }
   },
   "scripts": {
@@ -111,5 +131,10 @@
     "react-dom": "18.3.1",
     "react-test-renderer": "18.3.1",
     "semver": "7.8.5"
+  },
+  "directories": {
+    "doc": "docs",
+    "lib": "lib",
+    "test": "test"
   }
 }

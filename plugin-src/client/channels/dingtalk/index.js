@@ -9,6 +9,11 @@ import {
   AgentPresetEditor,
   EMPTY_AGENT_PRESET_CATALOG,
 } from '../../agent-preset.js';
+import {
+  EMPTY_MODEL_CATALOG,
+  ModelCatalogContext,
+  ModelEditor,
+} from '../../model-setting.js';
 import { useWorkspaceSnapshotFence } from '../../workspace-snapshot-fence.js';
 import {
   BotSettingsButton,
@@ -169,19 +174,36 @@ function ProgressPanel({ status, busy, onCancel }) {
       h(Button, { onClick: onCancel, disabled: busy }, '取消接入')));
 }
 
+function ConnectionErrorDiagnostic({ error }) {
+  if (!error) return null;
+  return h('div', { className: 'ddt-errorDiagnostic' },
+    error.hint ? h('p', { className: 'ddt-errorHint' }, error.hint) : null,
+    h('span', { className: 'ddt-errorCode' },
+      h('span', null, '错误码'), `: ${error.code}`,
+      error.referenceId
+        ? h(React.Fragment, null, ' · ', h('span', null, '参考号'), `: ${error.referenceId}`)
+        : null));
+}
+
 function ProvisionError({ provision, busy, onRetry, onClose }) {
   const error = provision.error ?? {
     code: 'DINGTALK_PROVISION_FAILED',
     message: '钉钉机器人没有接入完成',
   };
+  const connectionFailed = Boolean(error.referenceId);
   return h('div', { className: 'ddt-card dim-surfaceCard' },
     h('div', { className: 'ddt-inlineError dim-inlineError', role: 'alert' },
-      h('h3', null, provision.status === 'expired' ? '二维码已过期' : '钉钉机器人没有接入完成'),
+      h('h3', null, provision.status === 'expired'
+        ? '二维码已过期'
+        : connectionFailed ? '机器人已保存，但连接未就绪' : '钉钉机器人没有接入完成'),
       h('p', null, error.message),
-      h('span', { className: 'ddt-errorCode' }, error.code),
+      h(ConnectionErrorDiagnostic, { error }),
       h('div', { className: 'ddt-actions dim-viewActions' },
-        h(Button, { kind: 'primary', onClick: onRetry, disabled: busy }, '重新生成二维码'),
-        h(Button, { onClick: onClose, disabled: busy }, '关闭'))));
+        connectionFailed
+          ? h(Button, { kind: 'primary', onClick: onClose, disabled: busy }, '查看已保存的机器人')
+          : h(React.Fragment, null,
+              h(Button, { kind: 'primary', onClick: onRetry, disabled: busy }, '重新生成二维码'),
+              h(Button, { onClick: onClose, disabled: busy }, '关闭')))));
 }
 
 function checkedTime(value) {
@@ -221,6 +243,7 @@ export function AccountCard({
   removing,
   onReconnect,
   onWorkspaceSave,
+  onModelSave,
   onAgentPresetSave,
   onContextEnhancementSave,
   onRequestRemove,
@@ -253,11 +276,17 @@ export function AccountCard({
             botId: account.botId,
             botName: account.bot.name,
             connected: account.connected,
+            accessPolicy: account.accessPolicy,
           }))),
       h(WorkspaceEditor, {
         workspace: account.workspace,
         disabled: Boolean(busy),
         onSave: onWorkspaceSave,
+      }),
+      h(ModelEditor, {
+        model: account.model,
+        disabled: Boolean(busy),
+        onSave: onModelSave,
       }),
       h(AgentPresetEditor, {
         agentPreset: account.agentPreset,
@@ -277,6 +306,7 @@ export function AccountCard({
             h(Button, { className: 'dim-cardAction', kind: 'danger', onClick: onRequestRemove, disabled: Boolean(busy) },
               '移除接入')),
           summary ? h('div', { className: 'ddt-summary dim-cardSummary' }, summary) : null,
+          account.error ? h(ConnectionErrorDiagnostic, { error: account.error }) : null,
           account.lastMessageError ? h(LastMessageErrorSummary, {
             className: 'ddt-summary',
             error: account.lastMessageError,
@@ -308,6 +338,7 @@ function AccountList(props) {
         removing: props.removeTarget === account.botId,
         onReconnect: () => props.onReconnect(account),
         onWorkspaceSave: (workspace) => props.onWorkspaceSave(account, workspace),
+        onModelSave: (model) => props.onModelSave(account, model),
         onAgentPresetSave: (agentPreset) => props.onAgentPresetSave(account, agentPreset),
         onContextEnhancementSave: (config) => props.onContextEnhancementSave(account, config),
         onRequestRemove: () => props.onRequestRemove(account),
@@ -322,6 +353,7 @@ export function DingtalkSettingsTab({ rpcCall }) {
   const [model, setModel] = React.useState({
     phase: 'loading', bots: [], totals: EMPTY_TOTALS, revision: 0, error: null,
     agentPresetCatalog: EMPTY_AGENT_PRESET_CATALOG,
+    modelCatalog: EMPTY_MODEL_CATALOG,
   });
   const [provision, setProvision] = React.useState(null);
   const [busy, setBusy] = React.useState(false);
@@ -429,6 +461,7 @@ export function DingtalkSettingsTab({ rpcCall }) {
         revision: snapshot.revision,
         error: null,
         agentPresetCatalog: snapshot.agentPresetCatalog ?? EMPTY_AGENT_PRESET_CATALOG,
+        modelCatalog: snapshot.modelCatalog ?? EMPTY_MODEL_CATALOG,
       });
       discardStaleFeedback(snapshot);
       if (restoreProvisioning && snapshot.provisioning) {
@@ -545,6 +578,7 @@ export function DingtalkSettingsTab({ rpcCall }) {
           revision: snapshot.revision,
           error: null,
           agentPresetCatalog: snapshot.agentPresetCatalog ?? EMPTY_AGENT_PRESET_CATALOG,
+          modelCatalog: snapshot.modelCatalog ?? EMPTY_MODEL_CATALOG,
         });
         discardStaleFeedback(snapshot);
       }
@@ -613,6 +647,12 @@ export function DingtalkSettingsTab({ rpcCall }) {
             ? snapshot?.bots.find((bot) => bot.botId === result.botId)
             : snapshot?.bots.find((bot) => bot.connected);
           if (!account?.connected) {
+            if (account?.error) {
+              setProvision((current) => current?.attemptId === attemptId
+                ? { ...current, ...result, status: 'failed', error: account.error }
+                : current);
+              return;
+            }
             setProvision((current) => current?.attemptId === attemptId
               ? { ...current, ...result, status: 'connecting' }
               : current);
@@ -680,6 +720,7 @@ export function DingtalkSettingsTab({ rpcCall }) {
           revision: snapshot.revision,
           error: null,
           agentPresetCatalog: snapshot.agentPresetCatalog ?? EMPTY_AGENT_PRESET_CATALOG,
+          modelCatalog: snapshot.modelCatalog ?? EMPTY_MODEL_CATALOG,
         });
         discardStaleFeedback(snapshot);
       }
@@ -697,9 +738,12 @@ export function DingtalkSettingsTab({ rpcCall }) {
       return snapshot;
     } catch (error) {
       if (!mountedRef.current) return undefined;
+      const visibleError = presentError(error);
       const failureMessage = operation === 'reconnect'
-        ? '连接检查失败，请稍后重试。'
-        : `操作失败：${presentError(error).message}`;
+        ? visibleError.referenceId
+          ? `连接检查失败：${visibleError.message}（参考号：${visibleError.referenceId}）`
+          : '连接检查失败，请稍后重试。'
+        : `操作失败：${visibleError.message}`;
       if (operation === 'reconnect') {
         setFeedbackByBot((current) => ({
           ...current,
@@ -743,6 +787,7 @@ export function DingtalkSettingsTab({ rpcCall }) {
           revision: snapshot.revision,
           error: null,
           agentPresetCatalog: snapshot.agentPresetCatalog ?? EMPTY_AGENT_PRESET_CATALOG,
+          modelCatalog: snapshot.modelCatalog ?? EMPTY_MODEL_CATALOG,
         });
         discardStaleFeedback(snapshot);
       }
@@ -769,6 +814,7 @@ export function DingtalkSettingsTab({ rpcCall }) {
           revision: snapshot.revision,
           error: null,
           agentPresetCatalog: snapshot.agentPresetCatalog ?? EMPTY_AGENT_PRESET_CATALOG,
+          modelCatalog: snapshot.modelCatalog ?? EMPTY_MODEL_CATALOG,
         });
         discardStaleFeedback(snapshot);
       }
@@ -831,7 +877,9 @@ export function DingtalkSettingsTab({ rpcCall }) {
       })
     : null;
 
-  return h(AgentPresetCatalogContext.Provider, {
+  return h(ModelCatalogContext.Provider, {
+    value: model.modelCatalog ?? EMPTY_MODEL_CATALOG,
+  }, h(AgentPresetCatalogContext.Provider, {
     value: model.agentPresetCatalog ?? EMPTY_AGENT_PRESET_CATALOG,
   }, h('section', { className: 'ddt-page dim-channelPage', 'aria-label': '钉钉设置' },
     h(Heading, {
@@ -869,6 +917,9 @@ export function DingtalkSettingsTab({ rpcCall }) {
                   removeTarget,
                   onReconnect: (account) => void reconnect(account),
                   onWorkspaceSave: saveWorkspace,
+                  onModelSave: (account, selectedModel) => saveBotSetting(
+                    account, 'model', DINGTALK_ENDPOINTS.setModel, { model: selectedModel },
+                  ),
                   onAgentPresetSave: (account, agentPreset) => saveBotSetting(
                     account, 'preset', DINGTALK_ENDPOINTS.setAgentPreset, { agentPreset },
                   ),
@@ -879,5 +930,5 @@ export function DingtalkSettingsTab({ rpcCall }) {
                   onConfirmRemove: (account) => void remove(account),
                   onCancelRemove: () => setRemoveTarget(null),
                 })
-              : null)));
+              : null))));
 }

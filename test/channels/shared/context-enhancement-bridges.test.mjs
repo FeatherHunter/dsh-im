@@ -25,7 +25,20 @@ const FILE = Buffer.from('unchanged file bytes');
 const logger = { info() {}, warn() {}, error() {} };
 
 function settings(overrides = {}) {
-  return { groupEnabled: true, directEnabled: true, fields: [...CONTEXT_ENHANCEMENT_FIELDS], guidance: '', ...overrides };
+  const {
+    groupEnabled = true,
+    directEnabled = true,
+    fields = [...CONTEXT_ENHANCEMENT_FIELDS],
+    guidance = '',
+    group = {},
+    direct = {},
+    ...extra
+  } = overrides;
+  return {
+    group: { enabled: groupEnabled, fields: [...fields], guidance, ...group },
+    direct: { enabled: directEnabled, fields: [...fields], guidance, ...direct },
+    ...extra,
+  };
 }
 
 function provider(channel, config) {
@@ -53,6 +66,12 @@ function sourceOf(content) {
   return JSON.parse(match[1]);
 }
 
+function textOf(content) {
+  return Array.isArray(content)
+    ? content.filter((item) => item?.type === 'text').map((item) => item.text).join('\n\n')
+    : content;
+}
+
 function withoutPrompt(calls) {
   return calls.map(([operation, ...args]) => operation === 'ask'
     ? [operation, args[0], '(prompt)', args[2]] : [operation, ...args]);
@@ -75,6 +94,10 @@ function fixture(channel, { contextEnhancement, onAsk } = {}) {
   const harness = {
     ensureRunning: async () => { calls.push(['ensureRunning']); },
     createSession: async () => { calls.push(['createSession']); return 'session-existing'; },
+    renameSession: async (sessionId, title) => {
+      calls.push(['renameSession', sessionId, title]);
+      return { title, seq: 0 };
+    },
     sessionExists: async (id) => { calls.push(['sessionExists', id]); return true; },
     hasActiveTurn: async () => false,
     isSessionRunning: async () => false,
@@ -138,6 +161,11 @@ function fixture(channel, { contextEnhancement, onAsk } = {}) {
     });
   } else {
     bridge = new FeishuHarnessBridge({ ...dependencies, status: {}, allowedSenderOpenIds: new Set(['*']),
+      // This shared suite asserts that approval/question replies are not
+      // context-enhanced. It drives the plain-text reply flow, so pin the
+      // text presentation; the default interaction cards are tested in the
+      // Feishu bridge tests.
+      interactionCards: false,
       channel: {}, client: { im: { v1: {
         message: { create: async (request) => {
           calls.push(['createMessage', request]);
@@ -164,7 +192,8 @@ function fixture(channel, { contextEnhancement, onAsk } = {}) {
       const from = { id: actor === 'actor' ? 42 : 43, is_bot: false };
       nameValue(from, 'first_name');
       value = normalizeTelegramUpdate({ update_id: id, message: {
-        message_id: id, chat: { id: 100, type: group ? 'supergroup' : 'private' }, from,
+        message_id: id, chat: { id: 100, type: group ? 'supergroup' : 'private',
+          ...(group ? { title: 'Telegram群' } : {}) }, from,
         text: group ? `@testbot ${text}` : text, entities: group ? [{ type: 'mention', offset: 0, length: 8 }] : [],
       } }, { botId: 'bot', username: 'testbot' });
     } else if (channel === 'discord') {
@@ -193,7 +222,8 @@ function fixture(channel, { contextEnhancement, onAsk } = {}) {
         item_list: [{ type: 1, text_item: { text } }] };
     } else if (channel === 'dingtalk') {
       value = { msgId: String(id), msgtype: 'text', text: { content: text }, senderStaffId: actor,
-        conversationType: group ? '2' : '1', conversationId: 'chat', isInAtList: true,
+        conversationType: group ? '2' : '1', conversationId: 'chat',
+        conversationTitle: group ? '钉钉测试群' : undefined, isInAtList: true,
         sessionWebhook: 'https://oapi.dingtalk.com/robot/reply?ticket=test' };
       nameValue(value, 'senderNick');
     } else if (channel === 'qq') {
@@ -266,6 +296,7 @@ for (const channel of CHANNELS) {
         await baseline.bridge.accept(baseline.event(1, undefined, { kind, media, poisonName: true }));
         assert.equal(baseline.prompts.length, 1);
         assert.equal(baseline.sourceReads, 0);
+        assert.equal(baseline.calls.some(([operation]) => operation === 'renameSession'), false);
         for (const contextEnhancement of variants) {
           const current = fixture(channel, { contextEnhancement });
           await current.bridge.accept(current.event(1, undefined, { kind, media, poisonName: true }));
@@ -281,16 +312,28 @@ for (const channel of CHANNELS) {
     test(`${channel} ${kind}: enabled source uses the actual event, optional name and internal bot ID`, async () => {
       const current = fixture(channel, { contextEnhancement: provider(channel, settings()) });
       await current.bridge.accept(current.event(1, 'hello', { kind }));
+      const chatId = channel === 'telegram' ? '100'
+        : channel === 'whatsapp' ? (kind === 'group' ? 'chat@g.us' : 'actor@s.whatsapp.net')
+          : channel === 'wecom' || channel === 'qq' || channel === 'weixin'
+            ? (kind === 'group' ? 'chat' : 'actor') : 'chat';
       const expected = {
         channel, conversationType: kind,
         senderId: channel === 'telegram' ? '42' : channel === 'whatsapp' ? 'actor@s.whatsapp.net' : 'actor',
         ...(['dingtalk', 'telegram', 'discord', 'whatsapp'].includes(channel) || (channel === 'qq' && kind === 'group')
           ? { senderName: 'Ada' } : {}),
+        ...(channel === 'dingtalk' && kind === 'group' ? { conversationTitle: '钉钉测试群' } : {}),
+        ...(channel === 'telegram' && kind === 'group' ? { conversationTitle: 'Telegram群' } : {}),
+        chatId,
+        ...(channel === 'slack' && kind === 'group' ? { threadId: 'thread-existing' } : {}),
         botId: `${channel}_internal`,
       };
       assert.deepEqual(sourceOf(current.prompts[0]), expected);
-      assert.ok(current.prompts[0].endsWith('\n\nhello'));
-      assert.doesNotMatch(current.prompts[0], /source_guidance|private-token|private-secret/);
+      assert.ok(textOf(current.prompts[0]).endsWith('\n\nhello'));
+      assert.doesNotMatch(textOf(current.prompts[0]), /source_guidance|private-token|private-secret/);
+      assert.deepEqual(
+        current.calls.filter(([operation]) => operation === 'renameSession'),
+        [['renameSession', 'session-existing', 'hello']],
+      );
       // Explicit null represents a provider event that does not include a nickname.
       await current.bridge.accept(current.event(2, 'missing name', { kind, name: null }));
       assert.equal(Object.hasOwn(sourceOf(current.prompts[1]), 'senderName'), false);
@@ -301,6 +344,24 @@ for (const channel of CHANNELS) {
         if (expected.senderName) assert.equal(next.senderName, 'Grace');
         assert.equal(current.sessions.size, 1, 'group speakers keep sharing the existing group Session');
       }
+    });
+  }
+
+  if (channel !== 'weixin') {
+    test(`${channel}: group and direct fields and guidance stay isolated`, async () => {
+      const config = settings({
+        group: { enabled: true, fields: ['channel'], guidance: 'GROUP-ONLY-TOKEN' },
+        direct: { enabled: true, fields: ['botId'], guidance: 'DIRECT-ONLY-TOKEN' },
+      });
+      const current = fixture(channel, { contextEnhancement: provider(channel, config) });
+      await current.bridge.accept(current.event(1, 'direct message', { kind: 'direct' }));
+      await current.bridge.accept(current.event(2, 'group message', { kind: 'group' }));
+      assert.deepEqual(sourceOf(current.prompts[0]), { botId: `${channel}_internal` });
+      assert.match(textOf(current.prompts[0]), /DIRECT-ONLY-TOKEN/);
+      assert.doesNotMatch(textOf(current.prompts[0]), /GROUP-ONLY-TOKEN|"channel"/);
+      assert.deepEqual(sourceOf(current.prompts[1]), { channel });
+      assert.match(textOf(current.prompts[1]), /GROUP-ONLY-TOKEN/);
+      assert.doesNotMatch(textOf(current.prompts[1]), /DIRECT-ONLY-TOKEN|"botId"/);
     });
   }
 
@@ -320,7 +381,18 @@ for (const channel of CHANNELS) {
         assert.ok(enhanced.endsWith(`\n\n${original}`));
       }
       assert.deepEqual(enabled.calls.filter(([op]) => op === 'file'), plain.calls.filter(([op]) => op === 'file'));
-      assert.deepEqual(withoutPrompt(enabled.calls), withoutPrompt(plain.calls), 'enhancement adds no provider or Harness requests');
+      const expectedTitle = media === 'file' && ['feishu', 'dingtalk'].includes(channel)
+        ? 'report.txt'
+        : 'caption';
+      assert.deepEqual(
+        enabled.calls.filter(([op]) => op === 'renameSession'),
+        [['renameSession', 'session-existing', expectedTitle]],
+      );
+      assert.deepEqual(
+        withoutPrompt(enabled.calls.filter(([op]) => op !== 'renameSession')),
+        withoutPrompt(plain.calls),
+        'enhancement only adds the initial title request',
+      );
     }
   });
 
@@ -338,7 +410,7 @@ for (const channel of CHANNELS) {
     const first = current.bridge.accept(current.event(1, 'first'));
     await started.promise;
     const queued = current.bridge.accept(current.event(2, 'queued'));
-    config.guidance = 'mutated after acceptance';
+    config.direct.guidance = 'mutated after acceptance';
     config = settings({ fields: ['botId'], guidance: 'version two' });
     const newer = current.bridge.accept(current.event(3, 'newer'));
     config = settings({ groupEnabled: false, directEnabled: false });
@@ -409,9 +481,12 @@ for (const channel of CHANNELS) {
     for (const config of [settings({ fields: ['channel'] }), settings({ fields: [], guidance: 'custom' }), settings({ fields: [], guidance: '' })]) {
       const current = fixture(channel, { contextEnhancement: provider(channel, config) });
       await current.bridge.accept(current.event(1, 'hello'));
-      if (config.fields.length) assert.deepEqual(sourceOf(current.prompts[0]), { channel });
-      else if (config.guidance) assert.equal(current.prompts[0], '<dsh_im_source_guidance>\ncustom\n</dsh_im_source_guidance>\n\nhello');
-      else assert.equal(current.prompts[0], 'hello');
+      if (config.direct.fields.length) assert.deepEqual(sourceOf(current.prompts[0]), { channel });
+      else if (config.direct.guidance) assert.equal(current.prompts[0], '<dsh_im_source_guidance>\ncustom\n</dsh_im_source_guidance>\n\nhello');
+      else {
+        assert.equal(current.prompts[0], 'hello');
+        assert.equal(current.calls.some(([operation]) => operation === 'renameSession'), false);
+      }
     }
   });
 
@@ -489,4 +564,26 @@ test('Discord prefers event member nickname, global name, then username without 
   }
   assert.deepEqual(current.prompts.map((content) => sourceOf(content).senderName),
     ['Group Nick', 'Global Name', 'username', undefined]);
+});
+
+test('Feishu topics expose chatId always and threadId only when the event carries a thread', async () => {
+  const current = fixture('feishu', { contextEnhancement: provider('feishu', settings()) });
+  await current.bridge.accept(current.event(1, 'main channel', { kind: 'group' }));
+  const main = sourceOf(current.prompts[0]);
+  assert.equal(main.chatId, 'chat');
+  assert.equal(Object.hasOwn(main, 'threadId'), false);
+  assert.deepEqual(main, {
+    channel: 'feishu', conversationType: 'group', senderId: 'actor',
+    chatId: 'chat', botId: 'feishu_internal',
+  });
+  const topic = current.event(2, 'inside a topic', { kind: 'group' });
+  topic.message.thread_id = 'omt_topic';
+  await current.bridge.accept(topic);
+  const topicSource = sourceOf(current.prompts[1]);
+  assert.equal(topicSource.chatId, 'chat');
+  assert.equal(topicSource.threadId, 'omt_topic');
+  assert.equal(current.sessions.size, 2, 'topic messages keep their own thread-scoped Session');
+  await current.bridge.accept(current.event(3, 'direct chat', { kind: 'direct' }));
+  assert.equal(sourceOf(current.prompts[2]).chatId, 'chat');
+  assert.equal(Object.hasOwn(sourceOf(current.prompts[2]), 'threadId'), false);
 });
