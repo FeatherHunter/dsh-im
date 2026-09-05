@@ -105,3 +105,41 @@ test('artifact permission failures use the shared channel permission classificat
     at: 123,
   });
 });
+test('preset failures cover hyphen codes, slash codes, and name the offending preset', () => {
+  const hyphen = classifyMessageFailure({ code: 'agent-preset-unavailable' }, options);
+  assert.equal(hyphen.code, 'PRESET_UNAVAILABLE');
+  assert.equal('presetId' in hyphen, false);
+
+  const slash = classifyMessageFailure({
+    code: 'agent-preset/not-found',
+    details: {
+      agentPreset: 'code',
+      available: ['standard', 'ptc', 'minimal', 'cordis', '/private/path', 'token-secret'],
+    },
+  }, options);
+  assert.equal(slash.code, 'PRESET_UNAVAILABLE');
+  assert.equal(slash.presetId, 'code');
+
+  const text = messageFailureText(slash);
+  assert.match(text, /出问题的 Preset：code/);
+  assert.match(text, /错误码：PRESET_UNAVAILABLE；参考号：MF-TEST01$/);
+  assert.doesNotMatch(text, /private|token-secret/);
+
+  const conflict = classifyMessageFailure({
+    code: 'agent-preset/conflict',
+    details: { requestedPreset: 'standard', existingPreset: 'code' },
+  }, options);
+  assert.equal(conflict.presetId, 'code');
+
+  const bogus = classifyMessageFailure({
+    code: 'agent-preset/invalid',
+    details: { agentPreset: '../../etc/passwd' },
+  }, options);
+  assert.equal(bogus.code, 'PRESET_UNAVAILABLE');
+  assert.equal('presetId' in bogus, false);
+  assert.doesNotMatch(messageFailureText(bogus), /etc\/passwd/);
+
+  assert.equal(publicMessageFailure(slash).presetId, 'code');
+  assert.equal('presetId' in publicMessageFailure(hyphen), false);
+});
+

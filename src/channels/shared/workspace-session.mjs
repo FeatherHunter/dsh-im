@@ -1,3 +1,4 @@
+import { isPresetUnavailableFailure } from './message-failure.mjs';
 import { withSessionBindingLock } from './session-binding-lock.mjs';
 import { initialSessionTitle } from './session-title.mjs';
 
@@ -62,7 +63,14 @@ export async function askInWorkspaceSession({
   const renameSignal = createOptions?.signal
     ?? (typeof askOptions === 'object' ? askOptions?.signal : undefined);
   const renameOptions = renameSignal ? { signal: renameSignal } : undefined;
+  // A conversation bound to a Session whose Agent Preset has since been
+  // deleted or broken fails every prompt at resume time, forever: the dead
+  // binding is kept, so the next message reuses it and fails again. Retire
+  // such a binding once and let the retry below create a fresh Session with
+  // the bot current preset instead of failing every message.
+  let retiredDeadPresetBinding = false;
   while (true) {
+    let reusedBinding = false;
     try {
       const binding = await withSessionBindingLock(state, key, async () => {
         let sessionId = state.sessionFor(key);
@@ -81,6 +89,8 @@ export async function askInWorkspaceSession({
               console.warn('[dsh-im] unable to set the initial Session title:', error?.message ?? error);
             }
           }
+        } else {
+          reusedBinding = true;
         }
         return { sessionId, session };
       });
@@ -104,7 +114,19 @@ export async function askInWorkspaceSession({
         ...(artifacts.length > 0 ? { artifacts } : {}),
       };
     } catch (error) {
-      if (error?.code !== WORKSPACE_SESSION_STALE) throw error;
+      if (error?.code !== WORKSPACE_SESSION_STALE) {
+        if (reusedBinding && !retiredDeadPresetBinding
+          && typeof state.clearSession === 'function'
+          && isPresetUnavailableFailure(error)) {
+          retiredDeadPresetBinding = true;
+          console.warn(
+            '[dsh-im] retired a bound Session whose Agent Preset is unavailable; creating a fresh one.',
+          );
+          await withSessionBindingLock(state, key, async () => state.clearSession(key));
+          continue;
+        }
+        throw error;
+      }
     }
   }
 }

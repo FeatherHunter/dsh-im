@@ -134,6 +134,10 @@ function failureCode(error) {
   if (code === 'workspace-session-stale') return 'SESSION_STALE';
   if (code.startsWith('workspace-')) return 'WORKSPACE_UNAVAILABLE';
   if (code.startsWith('agent-preset-')) return 'PRESET_UNAVAILABLE';
+  // Newer Host builds report preset failures with slash codes
+  // (agent-preset/not-found|invalid|conflict|locked). They mean the same
+  // thing to the user as the hyphen codes above.
+  if (code.startsWith('agent-preset/')) return 'PRESET_UNAVAILABLE';
   if (code.startsWith('image-') || code.startsWith('inbound-file-')
     || code === 'attachment-error') return 'INPUT_INVALID';
 
@@ -163,6 +167,22 @@ function failureCode(error) {
   return 'INTERNAL_UNKNOWN';
 }
 
+export function isPresetUnavailableFailure(error) {
+  return failureCode(error) === 'PRESET_UNAVAILABLE';
+}
+
+const SAFE_PRESET_ID = /^[a-z0-9][a-z0-9-]*$/;
+
+function safePresetId(error) {
+  const raw = error?.details?.agentPreset
+    ?? error?.details?.existingPreset
+    ?? error?.details?.requestedPreset;
+  if (typeof raw !== 'string') return null;
+  const id = raw.trim();
+  if (!SAFE_PRESET_ID.test(id)) return null;
+  return id.slice(0, 64);
+}
+
 function safeReferenceId(value) {
   return typeof value === 'string' && /^[A-Z0-9-]{6,40}$/u.test(value)
     ? value
@@ -188,9 +208,11 @@ export function classifyMessageFailure(error, {
     && userMessage.trim()
     ? 'INPUT_INVALID'
     : classifiedCode;
+  const presetId = code === 'PRESET_UNAVAILABLE' ? safePresetId(error) : null;
   return Object.freeze({
     code,
     reason: safeReason ?? code,
+    ...(presetId ? { presetId } : {}),
     message: typeof userMessage === 'string' && userMessage.trim()
       ? userMessage.trim()
       : t(FAILURE_MESSAGES[code]),
@@ -200,7 +222,12 @@ export function classifyMessageFailure(error, {
 }
 
 export function messageFailureText(failure) {
-  return `${failure.message}\n\n${t('错误码：{code}；参考号：{referenceId}', failure)}`;
+  const presetLine = failure?.code === 'PRESET_UNAVAILABLE'
+    && typeof failure?.presetId === 'string'
+    && failure.presetId
+    ? `\n${t('出问题的 Preset：{presetId}', failure)}`
+    : '';
+  return `${failure.message}${presetLine}\n\n${t('错误码：{code}；参考号：{referenceId}', failure)}`;
 }
 
 export function setLastMessageFailure(status, error, options) {
@@ -234,11 +261,15 @@ export function publicMessageFailure(value) {
     || typeof value.message !== 'string' || !value.message
     || typeof value.referenceId !== 'string' || !value.referenceId
     || !Number.isFinite(value.at)) return null;
-  return {
+  const result = {
     code: value.code.slice(0, 64),
     reason: value.reason.slice(0, 64),
     message: value.message.slice(0, 500),
     referenceId: value.referenceId.slice(0, 40),
     at: value.at,
   };
+  if (typeof value.presetId === 'string' && value.presetId) {
+    result.presetId = value.presetId.slice(0, 64);
+  }
+  return result;
 }
