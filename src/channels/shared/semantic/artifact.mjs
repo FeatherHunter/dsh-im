@@ -367,11 +367,31 @@ export class OutboundArtifactRegistry {
       throw new TypeError('A file path is required.');
     }
     const agent = exec?.agent;
-    const sessionId = agent?.session?.header?.id;
+    let sessionId = agent?.session?.header?.id;
     const workspace = agent?.session?.header?.cwd;
-    const turn = currentTurn(agent);
-    if (typeof sessionId !== 'string' || !sessionId
-      || typeof workspace !== 'string' || !workspace || turn === null) {
+    let turn = currentTurn(agent);
+    // Some Host dispatch paths invoke turn tools with a thin exec context
+    // (no session header/events), which used to fail every direct
+    // dsh_im_return_file call even mid-turn. When the request names an
+    // absolute path (no workspace needed to resolve it) and the registry
+    // tracks exactly one live turn, attribute to that turn. Anything
+    // ambiguous keeps the previous strict behavior and throws below.
+    if ((typeof sessionId !== 'string' || !sessionId || turn === null)
+      && isAbsolute(requestedPath)) {
+      const open = [];
+      for (const [openSessionId, openTurn] of this.#openTurns) {
+        if (typeof openSessionId === 'string' && openSessionId
+          && Number.isInteger(openTurn) && openTurn >= 0) {
+          open.push([openSessionId, openTurn]);
+        }
+      }
+      if (open.length === 1) {
+        sessionId = open[0][0];
+        turn = open[0][1];
+      }
+    }
+    if (typeof sessionId !== 'string' || !sessionId || turn === null
+      || (!isAbsolute(requestedPath) && (typeof workspace !== 'string' || !workspace))) {
       throw artifactError(
         'artifact-context-required',
         'A live Harness Session is required to return a file.',

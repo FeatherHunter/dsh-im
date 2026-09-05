@@ -354,3 +354,78 @@ test('a definitively failed base delivery is not treated as user-visible', async
 
   assert.equal(delivery.userVisible, false);
 });
+
+function thinExecution(callId) {
+  return { name: OUTBOUND_ARTIFACT_TOOL, callId, token: Symbol(callId) };
+}
+
+async function absoluteFixture(t, fileName, content) {
+  const dir = await mkdtemp(join(tmpdir(), 'dsh-im-thin-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const path = join(dir, fileName);
+  await writeFile(path, content);
+  return path;
+}
+
+test('a thin direct call with an absolute path attributes to the single open turn', async (t) => {
+  const registry = new OutboundArtifactRegistry({ uuid: () => 'artifact-thin-1' });
+  t.after(() => registry.clear());
+  registry.observeSessionEvent({ id: 'session-thin' }, { type: 'turn/start', data: { turn: 3 } });
+  const path = await absoluteFixture(t, 'page.html', '<h1>hi</h1>');
+  const tool = createOutboundArtifactTool({ registry });
+  const execution = thinExecution('call-thin-1');
+  const registered = await tool.definition.execute({ path }, execution);
+  assert.equal(registered.fileName, 'page.html');
+  tool.onResult(execution, { isError: false });
+  const [artifact] = registry.take('session-thin', 3);
+  assert.equal(artifact.origin.sessionId, 'session-thin');
+  assert.equal(artifact.origin.turn, 3);
+  const calls = [];
+  const delivery = await deliverOutboundArtifacts({
+    artifacts: [artifact],
+    channelKey: 'test',
+    sendFile: async (file) => {
+      calls.push(file.fileName);
+      return { messageId: 'file-thin-1' };
+    },
+  });
+  assert.deepEqual(calls, ['page.html']);
+  assert.equal(delivery.artifactsSent, 1);
+  await assertReleased(artifact);
+});
+
+test('a thin direct call stays strict with two open turns', async (t) => {
+  const registry = new OutboundArtifactRegistry({ uuid: () => 'artifact-thin-2' });
+  t.after(() => registry.clear());
+  registry.observeSessionEvent({ id: 'session-a' }, { type: 'turn/start', data: { turn: 1 } });
+  registry.observeSessionEvent({ id: 'session-b' }, { type: 'turn/start', data: { turn: 1 } });
+  const path = await absoluteFixture(t, 'page.html', '<h1>hi</h1>');
+  const tool = createOutboundArtifactTool({ registry });
+  await assert.rejects(
+    tool.definition.execute({ path }, thinExecution('call-thin-2')),
+    (error) => error?.code === 'artifact-context-required'
+      && /live Harness Session/.test(error.message),
+  );
+});
+
+test('a thin direct call with a relative path still requires a workspace', async (t) => {
+  const registry = new OutboundArtifactRegistry({ uuid: () => 'artifact-thin-3' });
+  t.after(() => registry.clear());
+  registry.observeSessionEvent({ id: 'session-thin' }, { type: 'turn/start', data: { turn: 1 } });
+  const tool = createOutboundArtifactTool({ registry });
+  await assert.rejects(
+    tool.definition.execute({ path: 'page.html' }, thinExecution('call-thin-3')),
+    (error) => error?.code === 'artifact-context-required',
+  );
+});
+
+test('a thin direct call with no open turn stays strict', async (t) => {
+  const registry = new OutboundArtifactRegistry({ uuid: () => 'artifact-thin-4' });
+  t.after(() => registry.clear());
+  const path = await absoluteFixture(t, 'page.html', '<h1>hi</h1>');
+  const tool = createOutboundArtifactTool({ registry });
+  await assert.rejects(
+    tool.definition.execute({ path }, thinExecution('call-thin-4')),
+    (error) => error?.code === 'artifact-context-required',
+  );
+});
