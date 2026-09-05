@@ -1,0 +1,498 @@
+<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><title>本次修复 diff 评审</title><style>body{margin:0;background:#0f1115;color:#e8ecf3;font-family:"PingFang SC","Microsoft YaHei",monospace;line-height:1.6}.wrap{max-width:1000px;margin:0 auto;padding:28px 20px 60px}h1{font-size:22px;font-family:"PingFang SC","Microsoft YaHei",sans-serif}h2{font-size:17px;margin:28px 0 8px;font-family:"PingFang SC","Microsoft YaHei",sans-serif;color:#5aa9ff}.sub{color:#9aa4b5;font-size:13px;font-family:"PingFang SC","Microsoft YaHei",sans-serif}pre{background:#171b22;border:1px solid #2a3140;border-radius:10px;padding:14px 16px;overflow-x:auto;font-size:12.5px}.add{color:#3fb97f}.del{color:#ff6b6b}.hk{color:#5aa9ff}.h{color:#9aa4b5}.card{background:#171b22;border:1px solid #2a3140;border-radius:10px;padding:12px 16px;font-family:"PingFang SC","Microsoft YaHei",sans-serif;font-size:14px}</style></head><body><div class="wrap"><h1>本次修复 diff（分支 private/custom@50a9797，未提交）</h1><div class="sub">4 个修改文件 + 1 个新测试文件 ｜ 用例：message-failure 6/6、自愈 5/5、飞书桥 149/149 ｜ 另有 2 个预先存在的环境失败（Windows 路径断言、symlink EPERM），干净树同现</div><div class="card"><b>改了什么（一句话版）：</b>① workspace-session 死绑定自愈；② 斜杠码兼容 + 被拒 ID 点名；③ 英文词条；④ 回归用例。详见各 diff。</div><h2>1. src/channels/shared/workspace-session.mjs（核心：死绑定自愈）</h2><pre><div> a/src/channels/shared/message-failure.mjs b/src/channels/shared/message-failure.mjs</div>
+<div>index 48f2501..6a89ef7 100644</div>
+<div class="h">--- a/src/channels/shared/message-failure.mjs</div>
+<div class="h">+++ b/src/channels/shared/message-failure.mjs</div>
+<div class="hk">@@ -134,6 +134,10 @@ function failureCode(error) {</div>
+<div>   if (code === 'workspace-session-stale') return 'SESSION_STALE';</div>
+<div>   if (code.startsWith('workspace-')) return 'WORKSPACE_UNAVAILABLE';</div>
+<div>   if (code.startsWith('agent-preset-')) return 'PRESET_UNAVAILABLE';</div>
+<div class="add">+  // Newer Host builds report preset failures with slash codes</div>
+<div class="add">+  // (agent-preset/not-found|invalid|conflict|locked). They mean the same</div>
+<div class="add">+  // thing to the user as the hyphen codes above.</div>
+<div class="add">+  if (code.startsWith('agent-preset/')) return 'PRESET_UNAVAILABLE';</div>
+<div>   if (code.startsWith('image-') || code.startsWith('inbound-file-')</div>
+<div>     || code === 'attachment-error') return 'INPUT_INVALID';</div>
+<div> </div>
+<div class="hk">@@ -163,6 +167,22 @@ function failureCode(error) {</div>
+<div>   return 'INTERNAL_UNKNOWN';</div>
+<div> }</div>
+<div> </div>
+<div class="add">+export function isPresetUnavailableFailure(error) {</div>
+<div class="add">+  return failureCode(error) === 'PRESET_UNAVAILABLE';</div>
+<div class="add">+}</div>
+<div class="add">+</div>
+<div class="add">+const SAFE_PRESET_ID = /^[a-z0-9][a-z0-9-]*$/;</div>
+<div class="add">+</div>
+<div class="add">+function safePresetId(error) {</div>
+<div class="add">+  const raw = error?.details?.agentPreset</div>
+<div class="add">+    ?? error?.details?.existingPreset</div>
+<div class="add">+    ?? error?.details?.requestedPreset;</div>
+<div class="add">+  if (typeof raw !== 'string') return null;</div>
+<div class="add">+  const id = raw.trim();</div>
+<div class="add">+  if (!SAFE_PRESET_ID.test(id)) return null;</div>
+<div class="add">+  return id.slice(0, 64);</div>
+<div class="add">+}</div>
+<div class="add">+</div>
+<div> function safeReferenceId(value) {</div>
+<div>   return typeof value === 'string' &amp;&amp; /^[A-Z0-9-]{6,40}$/u.test(value)</div>
+<div>     ? value</div>
+<div class="hk">@@ -188,9 +208,11 @@ export function classifyMessageFailure(error, {</div>
+<div>     &amp;&amp; userMessage.trim()</div>
+<div>     ? 'INPUT_INVALID'</div>
+<div>     : classifiedCode;</div>
+<div class="add">+  const presetId = code === 'PRESET_UNAVAILABLE' ? safePresetId(error) : null;</div>
+<div>   return Object.freeze({</div>
+<div>     code,</div>
+<div>     reason: safeReason ?? code,</div>
+<div class="add">+    ...(presetId ? { presetId } : {}),</div>
+<div>     message: typeof userMessage === 'string' &amp;&amp; userMessage.trim()</div>
+<div>       ? userMessage.trim()</div>
+<div>       : t(FAILURE_MESSAGES[code]),</div>
+<div class="hk">@@ -200,7 +222,12 @@ export function classifyMessageFailure(error, {</div>
+<div> }</div>
+<div> </div>
+<div> export function messageFailureText(failure) {</div>
+<div class="del">-  return `${failure.message}\n\n${t('错误码：{code}；参考号：{referenceId}', failure)}`;</div>
+<div class="add">+  const presetLine = failure?.code === 'PRESET_UNAVAILABLE'</div>
+<div class="add">+    &amp;&amp; typeof failure?.presetId === 'string'</div>
+<div class="add">+    &amp;&amp; failure.presetId</div>
+<div class="add">+    ? `\n${t('出问题的 Preset：{presetId}', failure)}`</div>
+<div class="add">+    : '';</div>
+<div class="add">+  return `${failure.message}${presetLine}\n\n${t('错误码：{code}；参考号：{referenceId}', failure)}`;</div>
+<div> }</div>
+<div> </div>
+<div> export function setLastMessageFailure(status, error, options) {</div>
+<div class="hk">@@ -234,11 +261,15 @@ export function publicMessageFailure(value) {</div>
+<div>     || typeof value.message !== 'string' || !value.message</div>
+<div>     || typeof value.referenceId !== 'string' || !value.referenceId</div>
+<div>     || !Number.isFinite(value.at)) return null;</div>
+<div class="del">-  return {</div>
+<div class="add">+  const result = {</div>
+<div>     code: value.code.slice(0, 64),</div>
+<div>     reason: value.reason.slice(0, 64),</div>
+<div>     message: value.message.slice(0, 500),</div>
+<div>     referenceId: value.referenceId.slice(0, 40),</div>
+<div>     at: value.at,</div>
+<div>   };</div>
+<div class="add">+  if (typeof value.presetId === 'string' &amp;&amp; value.presetId) {</div>
+<div class="add">+    result.presetId = value.presetId.slice(0, 64);</div>
+<div class="add">+  }</div>
+<div class="add">+  return result;</div>
+<div> }</div>
+<div>diff --git a/src/channels/shared/workspace-session.mjs b/src/channels/shared/workspace-session.mjs</div>
+<div>index 474b5e4..ec35174 100644</div>
+<div class="h">--- a/src/channels/shared/workspace-session.mjs</div>
+<div class="h">+++ b/src/channels/shared/workspace-session.mjs</div>
+<div class="hk">@@ -1,3 +1,4 @@</div>
+<div class="add">+import { isPresetUnavailableFailure } from './message-failure.mjs';</div>
+<div> import { withSessionBindingLock } from './session-binding-lock.mjs';</div>
+<div> import { initialSessionTitle } from './session-title.mjs';</div>
+<div> </div>
+<div class="hk">@@ -62,7 +63,14 @@ export async function askInWorkspaceSession({</div>
+<div>   const renameSignal = createOptions?.signal</div>
+<div>     ?? (typeof askOptions === 'object' ? askOptions?.signal : undefined);</div>
+<div>   const renameOptions = renameSignal ? { signal: renameSignal } : undefined;</div>
+<div class="add">+  // A conversation bound to a Session whose Agent Preset has since been</div>
+<div class="add">+  // deleted or broken fails every prompt at resume time, forever: the dead</div>
+<div class="add">+  // binding is kept, so the next message reuses it and fails again. Retire</div>
+<div class="add">+  // such a binding once and let the retry below create a fresh Session with</div>
+<div class="add">+  // the bot current preset instead of failing every message.</div>
+<div class="add">+  let retiredDeadPresetBinding = false;</div>
+<div>   while (true) {</div>
+<div class="add">+    let reusedBinding = false;</div>
+<div>     try {</div>
+<div>       const binding = await withSessionBindingLock(state, key, async () =&gt; {</div>
+<div>         let sessionId = state.sessionFor(key);</div>
+<div class="hk">@@ -81,6 +89,8 @@ export async function askInWorkspaceSession({</div>
+<div>               console.warn('[dsh-im] unable to set the initial Session title:', error?.message ?? error);</div>
+<div>             }</div>
+<div>           }</div>
+<div class="add">+        } else {</div>
+<div class="add">+          reusedBinding = true;</div>
+<div>         }</div>
+<div>         return { sessionId, session };</div>
+<div>       });</div>
+<div class="hk">@@ -104,7 +114,19 @@ export async function askInWorkspaceSession({</div>
+<div>         ...(artifacts.length &gt; 0 ? { artifacts } : {}),</div>
+<div>       };</div>
+<div>     } catch (error) {</div>
+<div class="del">-      if (error?.code !== WORKSPACE_SESSION_STALE) throw error;</div>
+<div class="add">+      if (error?.code !== WORKSPACE_SESSION_STALE) {</div>
+<div class="add">+        if (reusedBinding &amp;&amp; !retiredDeadPresetBinding</div>
+<div class="add">+          &amp;&amp; typeof state.clearSession === 'function'</div>
+<div class="add">+          &amp;&amp; isPresetUnavailableFailure(error)) {</div>
+<div class="add">+          retiredDeadPresetBinding = true;</div>
+<div class="add">+          console.warn(</div>
+<div class="add">+            '[dsh-im] retired a bound Session whose Agent Preset is unavailable; creating a fresh one.',</div>
+<div class="add">+          );</div>
+<div class="add">+          await withSessionBindingLock(state, key, async () =&gt; state.clearSession(key));</div>
+<div class="add">+          continue;</div>
+<div class="add">+        }</div>
+<div class="add">+        throw error;</div>
+<div class="add">+      }</div>
+<div>     }</div>
+<div>   }</div>
+<div> }</div>
+<div></div></pre><h2>2. src/channels/shared/message-failure.mjs（斜杠兼容 + 点名）</h2><pre><div> a/src/channels/shared/message-failure.mjs b/src/channels/shared/message-failure.mjs</div>
+<div>index 48f2501..6a89ef7 100644</div>
+<div class="h">--- a/src/channels/shared/message-failure.mjs</div>
+<div class="h">+++ b/src/channels/shared/message-failure.mjs</div>
+<div class="hk">@@ -134,6 +134,10 @@ function failureCode(error) {</div>
+<div>   if (code === 'workspace-session-stale') return 'SESSION_STALE';</div>
+<div>   if (code.startsWith('workspace-')) return 'WORKSPACE_UNAVAILABLE';</div>
+<div>   if (code.startsWith('agent-preset-')) return 'PRESET_UNAVAILABLE';</div>
+<div class="add">+  // Newer Host builds report preset failures with slash codes</div>
+<div class="add">+  // (agent-preset/not-found|invalid|conflict|locked). They mean the same</div>
+<div class="add">+  // thing to the user as the hyphen codes above.</div>
+<div class="add">+  if (code.startsWith('agent-preset/')) return 'PRESET_UNAVAILABLE';</div>
+<div>   if (code.startsWith('image-') || code.startsWith('inbound-file-')</div>
+<div>     || code === 'attachment-error') return 'INPUT_INVALID';</div>
+<div> </div>
+<div class="hk">@@ -163,6 +167,22 @@ function failureCode(error) {</div>
+<div>   return 'INTERNAL_UNKNOWN';</div>
+<div> }</div>
+<div> </div>
+<div class="add">+export function isPresetUnavailableFailure(error) {</div>
+<div class="add">+  return failureCode(error) === 'PRESET_UNAVAILABLE';</div>
+<div class="add">+}</div>
+<div class="add">+</div>
+<div class="add">+const SAFE_PRESET_ID = /^[a-z0-9][a-z0-9-]*$/;</div>
+<div class="add">+</div>
+<div class="add">+function safePresetId(error) {</div>
+<div class="add">+  const raw = error?.details?.agentPreset</div>
+<div class="add">+    ?? error?.details?.existingPreset</div>
+<div class="add">+    ?? error?.details?.requestedPreset;</div>
+<div class="add">+  if (typeof raw !== 'string') return null;</div>
+<div class="add">+  const id = raw.trim();</div>
+<div class="add">+  if (!SAFE_PRESET_ID.test(id)) return null;</div>
+<div class="add">+  return id.slice(0, 64);</div>
+<div class="add">+}</div>
+<div class="add">+</div>
+<div> function safeReferenceId(value) {</div>
+<div>   return typeof value === 'string' &amp;&amp; /^[A-Z0-9-]{6,40}$/u.test(value)</div>
+<div>     ? value</div>
+<div class="hk">@@ -188,9 +208,11 @@ export function classifyMessageFailure(error, {</div>
+<div>     &amp;&amp; userMessage.trim()</div>
+<div>     ? 'INPUT_INVALID'</div>
+<div>     : classifiedCode;</div>
+<div class="add">+  const presetId = code === 'PRESET_UNAVAILABLE' ? safePresetId(error) : null;</div>
+<div>   return Object.freeze({</div>
+<div>     code,</div>
+<div>     reason: safeReason ?? code,</div>
+<div class="add">+    ...(presetId ? { presetId } : {}),</div>
+<div>     message: typeof userMessage === 'string' &amp;&amp; userMessage.trim()</div>
+<div>       ? userMessage.trim()</div>
+<div>       : t(FAILURE_MESSAGES[code]),</div>
+<div class="hk">@@ -200,7 +222,12 @@ export function classifyMessageFailure(error, {</div>
+<div> }</div>
+<div> </div>
+<div> export function messageFailureText(failure) {</div>
+<div class="del">-  return `${failure.message}\n\n${t('错误码：{code}；参考号：{referenceId}', failure)}`;</div>
+<div class="add">+  const presetLine = failure?.code === 'PRESET_UNAVAILABLE'</div>
+<div class="add">+    &amp;&amp; typeof failure?.presetId === 'string'</div>
+<div class="add">+    &amp;&amp; failure.presetId</div>
+<div class="add">+    ? `\n${t('出问题的 Preset：{presetId}', failure)}`</div>
+<div class="add">+    : '';</div>
+<div class="add">+  return `${failure.message}${presetLine}\n\n${t('错误码：{code}；参考号：{referenceId}', failure)}`;</div>
+<div> }</div>
+<div> </div>
+<div> export function setLastMessageFailure(status, error, options) {</div>
+<div class="hk">@@ -234,11 +261,15 @@ export function publicMessageFailure(value) {</div>
+<div>     || typeof value.message !== 'string' || !value.message</div>
+<div>     || typeof value.referenceId !== 'string' || !value.referenceId</div>
+<div>     || !Number.isFinite(value.at)) return null;</div>
+<div class="del">-  return {</div>
+<div class="add">+  const result = {</div>
+<div>     code: value.code.slice(0, 64),</div>
+<div>     reason: value.reason.slice(0, 64),</div>
+<div>     message: value.message.slice(0, 500),</div>
+<div>     referenceId: value.referenceId.slice(0, 40),</div>
+<div>     at: value.at,</div>
+<div>   };</div>
+<div class="add">+  if (typeof value.presetId === 'string' &amp;&amp; value.presetId) {</div>
+<div class="add">+    result.presetId = value.presetId.slice(0, 64);</div>
+<div class="add">+  }</div>
+<div class="add">+  return result;</div>
+<div> }</div>
+<div>diff --git a/src/channels/shared/workspace-session.mjs b/src/channels/shared/workspace-session.mjs</div>
+<div>index 474b5e4..ec35174 100644</div>
+<div class="h">--- a/src/channels/shared/workspace-session.mjs</div>
+<div class="h">+++ b/src/channels/shared/workspace-session.mjs</div>
+<div class="hk">@@ -1,3 +1,4 @@</div>
+<div class="add">+import { isPresetUnavailableFailure } from './message-failure.mjs';</div>
+<div> import { withSessionBindingLock } from './session-binding-lock.mjs';</div>
+<div> import { initialSessionTitle } from './session-title.mjs';</div>
+<div> </div>
+<div class="hk">@@ -62,7 +63,14 @@ export async function askInWorkspaceSession({</div>
+<div>   const renameSignal = createOptions?.signal</div>
+<div>     ?? (typeof askOptions === 'object' ? askOptions?.signal : undefined);</div>
+<div>   const renameOptions = renameSignal ? { signal: renameSignal } : undefined;</div>
+<div class="add">+  // A conversation bound to a Session whose Agent Preset has since been</div>
+<div class="add">+  // deleted or broken fails every prompt at resume time, forever: the dead</div>
+<div class="add">+  // binding is kept, so the next message reuses it and fails again. Retire</div>
+<div class="add">+  // such a binding once and let the retry below create a fresh Session with</div>
+<div class="add">+  // the bot current preset instead of failing every message.</div>
+<div class="add">+  let retiredDeadPresetBinding = false;</div>
+<div>   while (true) {</div>
+<div class="add">+    let reusedBinding = false;</div>
+<div>     try {</div>
+<div>       const binding = await withSessionBindingLock(state, key, async () =&gt; {</div>
+<div>         let sessionId = state.sessionFor(key);</div>
+<div class="hk">@@ -81,6 +89,8 @@ export async function askInWorkspaceSession({</div>
+<div>               console.warn('[dsh-im] unable to set the initial Session title:', error?.message ?? error);</div>
+<div>             }</div>
+<div>           }</div>
+<div class="add">+        } else {</div>
+<div class="add">+          reusedBinding = true;</div>
+<div>         }</div>
+<div>         return { sessionId, session };</div>
+<div>       });</div>
+<div class="hk">@@ -104,7 +114,19 @@ export async function askInWorkspaceSession({</div>
+<div>         ...(artifacts.length &gt; 0 ? { artifacts } : {}),</div>
+<div>       };</div>
+<div>     } catch (error) {</div>
+<div class="del">-      if (error?.code !== WORKSPACE_SESSION_STALE) throw error;</div>
+<div class="add">+      if (error?.code !== WORKSPACE_SESSION_STALE) {</div>
+<div class="add">+        if (reusedBinding &amp;&amp; !retiredDeadPresetBinding</div>
+<div class="add">+          &amp;&amp; typeof state.clearSession === 'function'</div>
+<div class="add">+          &amp;&amp; isPresetUnavailableFailure(error)) {</div>
+<div class="add">+          retiredDeadPresetBinding = true;</div>
+<div class="add">+          console.warn(</div>
+<div class="add">+            '[dsh-im] retired a bound Session whose Agent Preset is unavailable; creating a fresh one.',</div>
+<div class="add">+          );</div>
+<div class="add">+          await withSessionBindingLock(state, key, async () =&gt; state.clearSession(key));</div>
+<div class="add">+          continue;</div>
+<div class="add">+        }</div>
+<div class="add">+        throw error;</div>
+<div class="add">+      }</div>
+<div>     }</div>
+<div>   }</div>
+<div> }</div>
+<div></div></pre><h2>3. 其余两处（英文词条 + 分类器用例）</h2><pre><div> a/src/channels/shared/i18n-en/shared-a.mjs b/src/channels/shared/i18n-en/shared-a.mjs</div>
+<div>index 79b3f9e..647cff2 100644</div>
+<div class="h">--- a/src/channels/shared/i18n-en/shared-a.mjs</div>
+<div class="h">+++ b/src/channels/shared/i18n-en/shared-a.mjs</div>
+<div class="hk">@@ -91,6 +91,7 @@ export default {</div>
+<div>     'The current Workspace does not exist or is unavailable. Select another Workspace and try again.',</div>
+<div>   '当前 Agent Preset 不存在或暂不可用。请发送 /presetlist 后重新选择。':</div>
+<div>     'The current Agent Preset does not exist or is unavailable. Send /presetlist and select another one.',</div>
+<div class="add">+  '出问题的 Preset：{presetId}': 'Offending preset: {presetId}',</div>
+<div>   '回复已经生成，但机器人没有发送权限。请联系管理员检查渠道权限或重新绑定机器人。':</div>
+<div>     'The reply was generated, but the bot cannot send it. Ask an administrator to check channel permissions or reconnect the bot.',</div>
+<div>   '回复已经生成，但当前渠道正在限流，暂时无法发送。请稍后重试。':</div>
+<div>diff --git a/test/message-failure.test.mjs b/test/message-failure.test.mjs</div>
+<div>index 172abf7..6f803bd 100644</div>
+<div class="h">--- a/test/message-failure.test.mjs</div>
+<div class="h">+++ b/test/message-failure.test.mjs</div>
+<div class="hk">@@ -105,3 +105,41 @@ test('artifact permission failures use the shared channel permission classificat</div>
+<div>     at: 123,</div>
+<div>   });</div>
+<div> });</div>
+<div class="add">+test('preset failures cover hyphen codes, slash codes, and name the offending preset', () =&gt; {</div>
+<div class="add">+  const hyphen = classifyMessageFailure({ code: 'agent-preset-unavailable' }, options);</div>
+<div class="add">+  assert.equal(hyphen.code, 'PRESET_UNAVAILABLE');</div>
+<div class="add">+  assert.equal('presetId' in hyphen, false);</div>
+<div class="add">+</div>
+<div class="add">+  const slash = classifyMessageFailure({</div>
+<div class="add">+    code: 'agent-preset/not-found',</div>
+<div class="add">+    details: {</div>
+<div class="add">+      agentPreset: 'code',</div>
+<div class="add">+      available: ['standard', 'ptc', 'minimal', 'cordis', '/private/path', 'token-secret'],</div>
+<div class="add">+    },</div>
+<div class="add">+  }, options);</div>
+<div class="add">+  assert.equal(slash.code, 'PRESET_UNAVAILABLE');</div>
+<div class="add">+  assert.equal(slash.presetId, 'code');</div>
+<div class="add">+</div>
+<div class="add">+  const text = messageFailureText(slash);</div>
+<div class="add">+  assert.match(text, /出问题的 Preset：code/);</div>
+<div class="add">+  assert.match(text, /错误码：PRESET_UNAVAILABLE；参考号：MF-TEST01$/);</div>
+<div class="add">+  assert.doesNotMatch(text, /private|token-secret/);</div>
+<div class="add">+</div>
+<div class="add">+  const conflict = classifyMessageFailure({</div>
+<div class="add">+    code: 'agent-preset/conflict',</div>
+<div class="add">+    details: { requestedPreset: 'standard', existingPreset: 'code' },</div>
+<div class="add">+  }, options);</div>
+<div class="add">+  assert.equal(conflict.presetId, 'code');</div>
+<div class="add">+</div>
+<div class="add">+  const bogus = classifyMessageFailure({</div>
+<div class="add">+    code: 'agent-preset/invalid',</div>
+<div class="add">+    details: { agentPreset: '../../etc/passwd' },</div>
+<div class="add">+  }, options);</div>
+<div class="add">+  assert.equal(bogus.code, 'PRESET_UNAVAILABLE');</div>
+<div class="add">+  assert.equal('presetId' in bogus, false);</div>
+<div class="add">+  assert.doesNotMatch(messageFailureText(bogus), /etc\/passwd/);</div>
+<div class="add">+</div>
+<div class="add">+  assert.equal(publicMessageFailure(slash).presetId, 'code');</div>
+<div class="add">+  assert.equal('presetId' in publicMessageFailure(hyphen), false);</div>
+<div class="add">+});</div>
+<div class="add">+</div>
+<div></div></pre><h2>4. 新文件 test/workspace-session-heal.test.mjs（全文，5 用例）</h2><pre><div>1: import assert from 'node:assert/strict';</div>
+<div>2: import test from 'node:test';</div>
+<div>3: </div>
+<div>4: import { askInWorkspaceSession } from '../src/channels/shared/workspace-session.mjs';</div>
+<div>5: </div>
+<div>6: function memoryState(initial = {}) {</div>
+<div>7:   let sessions = { ...initial };</div>
+<div>8:   const calls = { clears: 0, sets: 0 };</div>
+<div>9:   return {</div>
+<div>10:     sessionFor(key) { return sessions[key] ?? null; },</div>
+<div>11:     async setSession(key, sessionId) {</div>
+<div>12:       calls.sets += 1;</div>
+<div>13:       sessions[key] = sessionId;</div>
+<div>14:       return true;</div>
+<div>15:     },</div>
+<div>16:     async clearSession(key) {</div>
+<div>17:       calls.clears += 1;</div>
+<div>18:       delete sessions[key];</div>
+<div>19:     },</div>
+<div>20:     snapshot() { return { ...sessions }; },</div>
+<div>21:     calls,</div>
+<div>22:   };</div>
+<div>23: }</div>
+<div>24: </div>
+<div>25: function presetDeadError(code = 'agent-preset-unavailable', details) {</div>
+<div>26:   const error = new Error('agent-presets: preset "code" not found');</div>
+<div>27:   error.code = code;</div>
+<div>28:   if (details) error.details = details;</div>
+<div>29:   return error;</div>
+<div>30: }</div>
+<div>31: </div>
+<div>32: test('a reused Session with a dead preset is retired once and the message succeeds on a fresh Session', async () =&gt; {</div>
+<div>33:   const state = memoryState({ chat: 'session-old' });</div>
+<div>34:   const calls = [];</div>
+<div>35:   let creations = 0;</div>
+<div>36:   const harness = {</div>
+<div>37:     workspaceSession(sessionId) {</div>
+<div>38:       return {</div>
+<div>39:         async sessionExists() { return true; },</div>
+<div>40:         async ask(text) {</div>
+<div>41:           calls.push(['ask', sessionId, text]);</div>
+<div>42:           if (sessionId === 'session-old') throw presetDeadError();</div>
+<div>43:           return 'healed answer';</div>
+<div>44:         },</div>
+<div>45:       };</div>
+<div>46:     },</div>
+<div>47:     async createSession() {</div>
+<div>48:       creations += 1;</div>
+<div>49:       calls.push(['create']);</div>
+<div>50:       return 'session-new';</div>
+<div>51:     },</div>
+<div>52:   };</div>
+<div>53: </div>
+<div>54:   const result = await askInWorkspaceSession({</div>
+<div>55:     harness, state, key: 'chat', text: 'hello',</div>
+<div>56:   });</div>
+<div>57: </div>
+<div>58:   assert.deepEqual(result, { sessionId: 'session-new', answer: 'healed answer' });</div>
+<div>59:   assert.deepEqual(state.snapshot(), { chat: 'session-new' });</div>
+<div>60:   assert.equal(creations, 1);</div>
+<div>61:   assert.equal(state.calls.clears, 1);</div>
+<div>62:   assert.deepEqual(calls, [</div>
+<div>63:     ['ask', 'session-old', 'hello'],</div>
+<div>64:     ['create'],</div>
+<div>65:     ['ask', 'session-new', 'hello'],</div>
+<div>66:   ]);</div>
+<div>67: });</div>
+<div>68: </div>
+<div>69: test('a Host slash-code preset failure on a reused Session heals the same way', async () =&gt; {</div>
+<div>70:   const state = memoryState({ chat: 'session-old' });</div>
+<div>71:   const harness = {</div>
+<div>72:     workspaceSession(sessionId) {</div>
+<div>73:       return {</div>
+<div>74:         async sessionExists() { return true; },</div>
+<div>75:         async ask() {</div>
+<div>76:           if (sessionId === 'session-old') {</div>
+<div>77:             throw presetDeadError('agent-preset/not-found', { agentPreset: 'code' });</div>
+<div>78:           }</div>
+<div>79:           return 'healed answer';</div>
+<div>80:         },</div>
+<div>81:       };</div>
+<div>82:     },</div>
+<div>83:     async createSession() { return 'session-new'; },</div>
+<div>84:   };</div>
+<div>85: </div>
+<div>86:   const result = await askInWorkspaceSession({</div>
+<div>87:     harness, state, key: 'chat', text: 'hello',</div>
+<div>88:   });</div>
+<div>89: </div>
+<div>90:   assert.deepEqual(result, { sessionId: 'session-new', answer: 'healed answer' });</div>
+<div>91:   assert.equal(state.calls.clears, 1);</div>
+<div>92: });</div>
+<div>93: </div>
+<div>94: test('a preset failure on a freshly created Session is reported, not retried', async () =&gt; {</div>
+<div>95:   const state = memoryState();</div>
+<div>96:   let creations = 0;</div>
+<div>97:   const harness = {</div>
+<div>98:     workspaceSession() {</div>
+<div>99:       return {</div>
+<div>100:         async sessionExists() { return true; },</div>
+<div>101:         async ask() { throw presetDeadError(); },</div>
+<div>102:       };</div>
+<div>103:     },</div>
+<div>104:     async createSession() {</div>
+<div>105:       creations += 1;</div>
+<div>106:       return 'session-new';</div>
+<div>107:     },</div>
+<div>108:   };</div>
+<div>109: </div>
+<div>110:   await assert.rejects(</div>
+<div>111:     askInWorkspaceSession({ harness, state, key: 'chat', text: 'hello' }),</div>
+<div>112:     (error) =&gt; error?.code === 'agent-preset-unavailable',</div>
+<div>113:   );</div>
+<div>114:   assert.equal(creations, 1);</div>
+<div>115:   assert.equal(state.calls.clears, 0);</div>
+<div>116: });</div>
+<div>117: </div>
+<div>118: test('a non-preset ask failure on a reused Session is reported without touching the binding', async () =&gt; {</div>
+<div>119:   const state = memoryState({ chat: 'session-old' });</div>
+<div>120:   let creations = 0;</div>
+<div>121:   const harness = {</div>
+<div>122:     workspaceSession() {</div>
+<div>123:       return {</div>
+<div>124:         async sessionExists() { return true; },</div>
+<div>125:         async ask() {</div>
+<div>126:           const error = new Error('boom');</div>
+<div>127:           error.code = 'turn-interrupted';</div>
+<div>128:           throw error;</div>
+<div>129:         },</div>
+<div>130:       };</div>
+<div>131:     },</div>
+<div>132:     async createSession() {</div>
+<div>133:       creations += 1;</div>
+<div>134:       return 'session-new';</div>
+<div>135:     },</div>
+<div>136:   };</div>
+<div>137: </div>
+<div>138:   await assert.rejects(</div>
+<div>139:     askInWorkspaceSession({ harness, state, key: 'chat', text: 'hello' }),</div>
+<div>140:     (error) =&gt; error?.code === 'turn-interrupted',</div>
+<div>141:   );</div>
+<div>142:   assert.equal(creations, 0);</div>
+<div>143:   assert.equal(state.calls.clears, 0);</div>
+<div>144:   assert.deepEqual(state.snapshot(), { chat: 'session-old' });</div>
+<div>145: });</div>
+<div>146: </div>
+<div>147: test('healing happens at most once: a second preset failure still surfaces', async () =&gt; {</div>
+<div>148:   const state = memoryState({ chat: 'session-old' });</div>
+<div>149:   let creations = 0;</div>
+<div>150:   const harness = {</div>
+<div>151:     workspaceSession() {</div>
+<div>152:       return {</div>
+<div>153:         async sessionExists() { return true; },</div>
+<div>154:         async ask() { throw presetDeadError(); },</div>
+<div>155:       };</div>
+<div>156:     },</div>
+<div>157:     async createSession() {</div>
+<div>158:       creations += 1;</div>
+<div>159:       return 'session-new-' + creations;</div>
+<div>160:     },</div>
+<div>161:   };</div>
+<div>162: </div>
+<div>163:   await assert.rejects(</div>
+<div>164:     askInWorkspaceSession({ harness, state, key: 'chat', text: 'hello' }),</div>
+<div>165:     (error) =&gt; error?.code === 'agent-preset-unavailable',</div>
+<div>166:   );</div>
+<div>167:   assert.equal(creations, 1);</div>
+<div>168:   assert.equal(state.calls.clears, 1);</div>
+<div>169: });</div>
+<div></div></pre></div></body></html>

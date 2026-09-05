@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>故障调查结论：飞书机器人高频 PRESET_UNAVAILABLE</title>
+<style>
+  :root { --bg:#0f1115; --card:#171b22; --line:#2a3140; --txt:#e8ecf3; --mut:#9aa4b5; --acc:#5aa9ff; --ok:#3fb97f; --bad:#ff6b6b; --warn:#ffbe55; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--txt); font-family:"PingFang SC","Microsoft YaHei",system-ui,sans-serif; line-height:1.75; }
+  .wrap { max-width:960px; margin:0 auto; padding:32px 20px 64px; }
+  h1 { font-size:26px; margin:0 0 6px; }
+  .sub { color:var(--mut); font-size:13px; margin-bottom:24px; }
+  h2 { font-size:20px; margin:36px 0 12px; padding-top:18px; border-top:1px solid var(--line); }
+  h3 { font-size:16px; margin:22px 0 8px; color:var(--acc); }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:16px 18px; margin:12px 0; }
+  table { width:100%; border-collapse:collapse; font-size:14px; margin:10px 0; }
+  th,td { border:1px solid var(--line); padding:8px 10px; text-align:left; vertical-align:top; }
+  th { background:#1e2430; }
+  code { background:#222839; padding:1px 6px; border-radius:5px; font-size:13px; }
+  .ok { color:var(--ok); font-weight:700; } .bad { color:var(--bad); font-weight:700; } .warn { color:var(--warn); font-weight:700; }
+  .flow { font-size:14px; }
+  .flow li { margin:6px 0; }
+  .foot { color:var(--mut); font-size:12px; margin-top:32px; }
+  a { color:var(--acc); }
+</style>
+</head>
+<body><div class="wrap">
+<h1>故障调查结论：飞书机器人高频报 PRESET_UNAVAILABLE</h1>
+<div class="sub">基线 main = upstream/main = 1fa86ed ｜ 运行树 private/custom ｜ 调查方式：4 路对抗审查 + Host 本体取证 ｜ 报告生成：HTML 单文件</div>
+
+<h2>一、场景复述（发生了什么）</h2>
+<div class="card">
+<p><b>人物与链路：</b>用户“猎羽”在飞书私聊里与机器人“小孙”对话。“小孙”是 dsh-im 飞书桥接的一个 bot，背后连着一台 DeepSeek Harness（DSH）Host，当前绑定的 Harness 会话是 <code>session-4ba8e999-9db7-4a74-b49b-c648ad2a439f</code>（创建时 preset=<code>ptc</code>，人设是第一性原理健身教练）。</p>
+<p><b>完整交互时间线（同一私聊，从上到下）：</b></p>
+<table>
+<tr><th>#</th><th>用户发的</th><th>机器人回的</th><th>session 日志</th></tr>
+<tr><td>1</td><td>hello</td><td class="bad">❌ PRESET_UNAVAILABLE（MF-AC71ACB7）</td><td>不在（创建即被拒，进不了会话）</td></tr>
+<tr><td>2</td><td>/presetlist</td><td>跟随 Host 默认 ptc；目录 4 项全健康</td><td class="ok">不在（命令不建会话，正常）</td></tr>
+<tr><td>3</td><td>/preset 1</td><td>已设为 standard（注明：已有会话不变，需 /new）</td><td class="ok">不在（命令不建会话，正常）</td></tr>
+<tr><td>4</td><td>1</td><td class="ok">✅ 增肌长文</td><td>turn 4 ✅</td></tr>
+<tr><td>5</td><td>1</td><td class="ok">✅ 定量追问</td><td>turn 5 ✅</td></tr>
+<tr><td>6</td><td>hello</td><td class="ok">✅ 正常回答</td><td>turn 6 ✅</td></tr>
+<tr><td>7</td><td>你是谁</td><td class="ok">✅ 正常回答</td><td>turn 7 ✅</td></tr>
+<tr><td>8</td><td>卡路里 help</td><td class="bad">❌ 先“小孙 撤回了一条消息”，再 PRESET_UNAVAILABLE（MF-C3FF35A8）</td><td>不在（本次新建被拒）；但该 session 的 turn 2 有另一次同文本的成功记录</td></tr>
+</table>
+<p><b>三个反直觉、但全部属实的现场特征：</b>① 存量已是合法的 <code>standard</code>、目录里也有 <code>standard</code>，还炸；② 同文本“卡路里 help”一成一败，与内容无关；③ “撤回”是机器人自己撤占位流式卡（失败清理），不是用户撤的。session 日志“缺消息”不是丢消息——命令消息、创建失败的消息本来就进不了任何会话。</p>
+</div>
+
+<h2>二、原因分析</h2>
+<h3>2.1 端到端因果链</h3>
+<ol class="flow">
+<li>该聊天是<strong>私聊</strong>，会话键只按发送人算（<code>src/channels/feishu/message-utils.mjs:29-44</code>，运行树与 main 一致），线程/引用不参与——全聊共享同一绑定。</li>
+<li>有可用绑定时直接<strong>复用老会话</strong>（<code>workspace-session.mjs:68-71</code>）→ turn 4–7 全部成功，且继续跑在老 <code>ptc</code> 会话上（<code>/preset 1</code> 只影响未来新会话，文档与实现一致）。<b>修正：复用不是“不碰 preset”——Host 在每次 prompt/resume 时会重验会话自带的 preset</b>，这正是本案失败点（见下条）。日志实锤：<code>session.prompt: resume failed … preset "code" not found (available: standard, ptc, minimal, cordis)</code>。</li>
+<li>“卡路里 help”到达时复用了<strong>另一个 key 下的老绑定</strong> <code>session-df49901a…</code>（同类还有 <code>session-7db1fb21…</code>），这两个会话创建于 <code>code</code> 时代；Host 在 resume 时重验其自带 preset → <code>preset "code" not found</code>。新建分支的盲透传（<code>bot-workspace-store.mjs:1346-1352</code>）在本案中不是触发点——触发点是<strong>死绑定的复用</strong>，而 <code>/preset</code> 只改未来新会话，救不了已绑定的死会话。</li>
+<li><strong>Host 拒收</strong>。B 线在 DSH 本体包内钉死：校验分两阶段——<code>composeAgent</code> 只 <code>resolve</code> 判存在，agent 发布前 <code>setup</code> 才 <code>mount</code> 判可挂载并整体回滚；<code>list</code> 零缓存每次重读。所以“列表里有 standard、创建时拒 standard”结构性成立，<strong>Top1 是 mount 期审计失败</strong>（未激活行 / root realm 服务泄漏 / 文件不可读），另有 TOCTOU 目录竞争、大小写精确匹配、默认指针热重载等 9 项并列可能。</li>
+<li>失败后占位流式卡被 <code>recall</code>（<code>feishu-channel.mjs:267-271</code>），再发出错误文本——“撤回 + 报错”是固定输出对，与截图完全吻合。</li>
+<li>死绑定<strong>永远不清</strong>，下一条继续复用它继续失败（粘性循环）→ 一次卡住、条条卡住，这就是“3~4/5、每个普通消息都遇到”的数学原因。而 <code>/preset</code> 改的是另一个维度的配置，所以用户越改越困惑。</li>
+</ol>
+<h3>2.2 必须如实记录的两个分歧</h3>
+<div class="card">
+<p>① <b>线程换 key 不适用于本现场</b>：C 线的 thread 分流只影响群聊话题；本现场是私聊，成功与失败是同一 key，差异只能来自绑定/会话丢失，而非 key 分叉。</p>
+<p>② <b>斜杠 vs 连字符版本错位</b>：dsh-im 分类器只认连字符 <code>agent-preset-</code>（<code>message-failure.mjs:136</code>）；checkout 内 Host 2.0.5 只发斜杠 <code>agent-preset/*</code>，且仓内无任何翻译层（<code>harness-client</code> 零命中）。斜杠码只会掉进 <code>INTERNAL_UNKNOWN</code>，变不出用户看到的 <code>PRESET_UNAVAILABLE</code>——故用户运行期的 Host 说的是连字符，存在版本错位。连带发现一个前向兼容 bug：Host 升级到斜杠码后，preset 拒绝会被误渲染成 <code>INTERNAL_UNKNOWN</code>。</p>
+</div>
+<h3>2.3 根因排名</h3>
+<table>
+<tr><th>排名</th><th>根因</th><th>说明</th></tr>
+<tr><td>1</td><td>死绑定复用：老会话自带已下架的 <code>code</code>，Host 每次 resume 重验必拒（日志实锤）</td><td>与 <code>/preset=standard</code> 无关，是两个维度的配置；<code>/preset</code> 救不了已绑定的死会话</td></tr>
+<tr><td>2</td><td>失败粘性放大</td><td>建不出会话就不存映射，下条必重试 → 体感 100%</td></tr>
+<tr><td>3</td><td>报错脱敏不带被拒 ID</td><td>只能看到反复炸，看不到炸的是哪个值</td></tr>
+<tr><td>4</td><td>复用掩盖真相</td><td>老会话活着时一切正常，新建才爆，时好时坏</td></tr>
+</table>
+
+<h2>三、解决办法</h2>
+<h3>已落地的代码修复（本次调查直接产出）</h3>
+<ol class="flow">
+<li><b>死绑定自愈</b>（<code>workspace-session.mjs</code>）：复用绑定的 <code>ask</code> 若以 preset 不可用失败， retire 该绑定一次并用机器人当前 preset 建新会话重试；新建即失败或二次失败照常报错，绝不死循环。回归用例 <code>test/workspace-session-heal.test.mjs</code>（5 个）全过。</li>
+<li><b>兼容 Host 新码</b>（<code>message-failure.mjs</code>）：<code>agent-preset/…</code> 斜杠码同样归一 <code>PRESET_UNAVAILABLE</code>，并导出 <code>isPresetUnavailableFailure</code> 供自愈判定。</li>
+<li><b>报错点名</b>：失败对象携带 <code>presetId</code>（仅小写合法 ID，防泄漏），文案追加“出问题的 Preset：code”，尾部错误码/参考号格式不变，中英双语。</li>
+<li>回归：message-failure 6/6、新自愈 5/5、飞书桥 149/149 通过；另有两个预先存在的环境失败（Windows 路径断言、symlink EPERM），干净树同现，与本次改动无关。</li>
+</ol>
+<h3>立即止血（用户可做，一条命令）</h3>
+<div class="card"><b>在出事的聊天里发 <code>/new</code></b>——丢掉 <code>code</code> 时代的死绑定，用当前 <code>standard</code> 建新会话，下一条消息即恢复。这就是之前 <code>/preset</code> 不起作用的原因：它只管未来新会话，管不了已绑定的死会话。</div>
+<ol class="flow">
+<li>出事聊天发 <code>/preset --default</code>，再 <code>/new</code>，重发普通消息（绕开存量直连 Host 默认）。</li>
+<li>重发一次 <code>/presetlist</code> 确认 <code>standard</code> 是否仍在目录（4 项是否齐）。</li>
+<li>取 <code>dsh web</code> 日志里 <code>MF-C3FF35A8</code> / <code>MF-AC71ACB7</code> 两行的原始 <code>code/method/details</code>（搜 <code>failed [MF-…]</code>），这是定案证据；同时确认 DSH Desktop 版本号。</li>
+</ol>
+<h3>代码修复（按顺序）</h3>
+<ol class="flow">
+<li>分类器兼容斜杠码（<code>agent-preset/</code> → <code>PRESET_UNAVAILABLE</code>），否则下个 Host 版本全变 <code>INTERNAL_UNKNOWN</code>。</li>
+<li>错误文案回显归一化后的 preset ID（自有数据，不泄密）。</li>
+<li>新建连续失败熔断：提示切 <code>--default</code>，打破无限重试。</li>
+<li><code>main</code> 落地大小写归一与 <code>code→standard</code> 迁移（参照 <code>b73901a</code>）。</li>
+<li>补 G1/G2 用例：bridge preset 失败分支、坏文件 load 行为。</li>
+</ol>
+
+<h2>四、证据索引</h2>
+<div class="card" style="font-size:14px">
+<p>dsh-im 侧：<code>message-failure.mjs:136/79-80/166-170/202-204</code>、<code>workspace-session.mjs:67-72</code>、<code>bot-workspace-store.mjs:1082/1207/1346-1352/1588</code>、<code>agent-preset.mjs:23</code>、<code>feishu/message-utils.mjs:29-44</code>、<code>feishu/feishu-channel.mjs:211/267-271/510-518</code>、<code>feishu/bridge.mjs</code> 落盘段。</p>
+<p>Host 侧（<code>app.asar.unpacked</code>）：<code>dsh-api-session-controller/lib/index.js</code>（create 566-594、ensureSession 245-267、composeAgent 350-363、rejectCreation 843-857）、<code>dsh-agent-presets/lib/index.js</code>（resolve 1436-1448、mount 1499-1506、审计 905-938）、部署默认 <code>dsh-web-app/cordis.patch.yml:440-444</code>。</p>
+<p>六份过程报告：<code>docs/research/preset-unavailable-repro-and-host-evidence.md</code>、<code>preset-unavailable-frequent-bug-or-not.md</code>、<code>preset-adversarial-A-producers.md</code>、<code>preset-adversarial-B-host.md</code>、<code>preset-adversarial-C-feishu.md</code>、<code>preset-adversarial-D-flakiness.md</code>。</p>
+<p>现场材料：飞书聊天记录（两次失败 MF-AC71ACB7 / MF-C3FF35A8、两次截图）、<code>session-4ba8e999-9db7-4a74-b49b-c648ad2a439f.zip</code>（7 turn 全成功）。</p>
+</div>
+<div class="foot">结论（已更新）：日志实锤根因为死绑定复用——<code>code</code> 时代的老会话在每次 resume 时被 Host 拒绝，与存量 <code>standard</code> 无关；“列表有、创建拒”的 mount 期/TOCTOU 机制仍是同类故障的结构性成因，已保留。同类死循环已由死绑定自愈修复覆盖；斜杠码兼容与报错点名已落地。Host 两阶段校验与 mount 审计细节见 B 线报告。</div>
+</div></body></html>
