@@ -106,7 +106,9 @@ test('/presetlist filters invalid, duplicate, and broken entries and sanitizes l
     items: [
       { id: 'safe', label: 'Safe\nPreset\u202e' },
       { id: 'safe', label: 'Duplicate' },
-      { id: 'UPPER', label: 'Invalid' },
+      // Uppercase ids normalize to lowercase (`UPPER` -> `upper` is tested below);
+      // use a structurally invalid id here to exercise the filter.
+      { id: 'has space', label: 'Invalid' },
       { id: 'broken', label: 'Broken', broken: { message: 'secret' } },
     ],
   };
@@ -116,6 +118,25 @@ test('/presetlist filters invalid, duplicate, and broken entries and sanitizes l
   assert.match(result.message, /可用 Agent Preset（1）/);
   assert.match(result.message, /Safe Preset（safe）/);
   assert.doesNotMatch(result.message, /Duplicate|Invalid|Broken|secret|\u202e/);
+});
+
+test('/presetlist normalizes uppercase ids and legacy code falls back to standard', async () => {
+  const catalog = {
+    defaultId: 'standard',
+    items: [
+      { id: 'ptc', label: 'PTC' },
+      { id: 'standard', label: 'Standard' },
+    ],
+  };
+  const { harness, state } = fixture({ catalog });
+  const result = await runPresetCommand('/presetlist', harness, state, 'direct:one');
+  assert.match(result.message, /可用 Agent Preset（2）/);
+  // Uppercase input resolves to the lowercase preset instead of Host default.
+  const upper = await runPresetCommand('/preset PTC', harness, state, 'direct:one');
+  assert.match(upper.message, /已设置为/);
+  // Legacy `code` never persists: it resolves to `standard`.
+  const legacy = await runPresetCommand('/preset CODE', harness, state, 'direct:one');
+  assert.match(legacy.message, /Standard（standard）/);
 });
 
 test('/preset reports an explicit unavailable current preset without changing it', async () => {

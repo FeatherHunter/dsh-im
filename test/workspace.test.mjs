@@ -1715,9 +1715,14 @@ test('BotWorkspaceStore rejects invalid agent preset ids and missing bots', asyn
   const store = await new BotWorkspaceStore(path, { defaultWorkspace }).load();
   await store.ensure('bot_one');
 
-  await assert.rejects(store.setAgentPreset('bot_one', 'Standard'), { code: 'agent-preset-invalid' });
+  // Preset ids are case-insensitive: `Standard` means `standard`.
+  await store.setAgentPreset('bot_one', 'Standard');
+  assert.equal(store.agentPresetFor('bot_one'), 'standard');
+  // Legacy `code` preset no longer ships: it falls back to `standard`, never `code`.
+  await store.setAgentPreset('bot_one', 'CODE');
+  assert.equal(store.agentPresetFor('bot_one'), 'standard');
+  await assert.rejects(store.setAgentPreset('bot_one', 'Bad Id!'), { code: 'agent-preset-invalid' });
   await assert.rejects(store.setAgentPreset('bot_missing', 'standard'), { code: 'workspace-bot-not-found' });
-  assert.equal(store.agentPresetFor('bot_one'), null);
 });
 
 test('changing a bot agent preset does not clear sessions', async (t) => {

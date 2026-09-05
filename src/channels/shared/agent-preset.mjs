@@ -3,6 +3,16 @@ import { t } from './i18n.mjs';
 /** Matches DeepSeek Harness agent-preset directory ids. */
 export const AGENT_PRESET_ID = /^[a-z0-9][a-z0-9-]*$/;
 
+/** Safe default when a stored/selected preset is abnormal: never fall back to `code`. */
+export const STANDARD_AGENT_PRESET_ID = 'standard';
+
+/**
+ * Legacy preset ids that no longer ship with DSH (e.g. the removed `code`
+ * preset, now superseded by `ptc`/`standard`). They resolve to the safe
+ * default instead of persisting as broken ids.
+ */
+export const LEGACY_AGENT_PRESET_FALLBACKS = Object.freeze({ code: STANDARD_AGENT_PRESET_ID });
+
 export const EMPTY_AGENT_PRESET_CATALOG = Object.freeze({
   defaultId: '',
   items: Object.freeze([]),
@@ -11,7 +21,11 @@ export const EMPTY_AGENT_PRESET_CATALOG = Object.freeze({
 export function normalizeAgentPresetId(value) {
   if (value == null) return null;
   if (typeof value !== 'string') return null;
-  const id = value.trim();
+  // Case-insensitive: DSH preset ids are lowercase, so `PTC` means `ptc`.
+  // Without this, an uppercase selection silently becomes null (follow Host
+  // default) and the session can look like it ran an unexpected preset.
+  const id = value.trim().toLowerCase();
+  if (Object.hasOwn(LEGACY_AGENT_PRESET_FALLBACKS, id)) return LEGACY_AGENT_PRESET_FALLBACKS[id];
   return AGENT_PRESET_ID.test(id) ? id : null;
 }
 
