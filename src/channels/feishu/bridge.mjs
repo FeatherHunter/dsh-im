@@ -302,9 +302,6 @@ async function diffSnapshot(beforeMap, allowedRoots) {
   return newFiles.slice(0, 5);
 }
 
-// Exported for tests (issue #38): unit-cover the implicit fallback scan.
-export const __issue38SnapshotHelpers = { snapshotFiles, diffSnapshot, SNAPSHOT_ALLOWED_EXTS };
-
 function answerTextForDelivery(answer, artifacts) {
   if (typeof answer === 'string' && answer.trim()) return answer;
   return artifacts.length > 0 ? t('结果文件已生成。') : answer;
@@ -3592,52 +3589,27 @@ export class FeishuHarnessBridge {
     }
   }
 
-  async #captureTurnSnapshot() {
-    try {
-      const allowedRoots = await this.#getAllowedRoots();
-      if (!allowedRoots.length) return undefined;
-      return await snapshotFiles(allowedRoots);
-    } catch {
-      return undefined;
-    }
-  }
-
-  #attachmentExcludes(artifacts = [], mediaAttachments = []) {
-    const excludePaths = new Set();
-    const excludeNames = new Set();
-    for (const item of [...(artifacts ?? []), ...(mediaAttachments ?? [])]) {
-      if (typeof item?.deliveryKey === 'string') excludePaths.add(item.deliveryKey);
-      if (typeof item?.absPath === 'string') excludePaths.add(item.absPath);
-      if (typeof item?.fileName === 'string') excludeNames.add(item.fileName);
-      if (typeof item?.name === 'string') excludeNames.add(item.name);
-    }
-    return { excludePaths, excludeNames };
-  }
-
-  async #sendAttachments(chatId, answer, { replyTo, beforeSnapshot, excludePaths, excludeNames } = {}) {
-    const hasAnswer = typeof answer === 'string' && answer.trim();
-    if (!hasAnswer && !(beforeSnapshot instanceof Map)) {
-      return 0;
+  async #sendAttachments(chatId, answer, { replyTo, beforeSnapshot } = {}) {
+    if (!answer || typeof answer !== 'string') {
+      return;
     }
     if (!this.#channel?.sendImage && !this.#channel?.sendFile) {
-      return 0;
+      return;
     }
     let allowedRoots;
     try {
       allowedRoots = await this.#getAllowedRoots();
     } catch (e) {
-      return 0;
+      return;
     }
     if (!allowedRoots.length) {
-      return 0;
+      return;
     }
-    let parsed = { attachments: [] };
-    if (hasAnswer) {
-      try {
-        parsed = await extractAttachments(answer, { allowedRoots });
-      } catch (e) {
-        return 0;
-      }
+    let parsed;
+    try {
+      parsed = await extractAttachments(answer, { allowedRoots });
+    } catch (e) {
+      return;
     }
     let attachments = parsed.attachments;
     // 通用兜底：快照对比，支持所有文件类型，不写死mtime/html
@@ -3658,29 +3630,19 @@ export class FeishuHarnessBridge {
       } catch (e) {
       }
     }
-    if (excludePaths instanceof Set || excludeNames instanceof Set) {
-      attachments = attachments.filter((att) => {
-        if (excludePaths instanceof Set && excludePaths.has(att.absPath)) return false;
-        if (excludeNames instanceof Set && (excludeNames.has(att.name) || excludeNames.has(att.absPath))) return false;
-        return true;
-      });
-    }
     if (!attachments.length) {
-      return 0;
+      return;
     }
-    let sent = 0;
     for (const att of attachments) {
       try {
         await this.#sendAttachmentFile(chatId, att, { replyTo });
         this.#status.attachmentsSent = (this.#status.attachmentsSent ?? 0) + 1;
-        sent += 1;
       } catch (error) {
         this.#status.attachmentErrors = (this.#status.attachmentErrors ?? 0) + 1;
         this.#logger.warn?.(`[dsh-feishu] failed to send attachment ${att.absPath}:`, error.message);
         this.#status.lastError = error.message ?? String(error);
       }
     }
-    return sent;
   }
 
   // ========== 隔离扩展：仅处理以 media 开头的标签（本次需求） ==========
@@ -3802,10 +3764,6 @@ export class FeishuHarnessBridge {
       }));
       contextEnhanced = content !== originalContent;
     }
-    // Issue #38: capture the workspace snapshot before the turn so files the
-    // skill generates (e.g. calorie HTML) can be returned even when the model
-    // neither calls the file-return tool nor mentions a path in its answer.
-    const beforeSnapshot = await this.#captureTurnSnapshot();
     if (!this.#channel?.stream) {
       const { answer, artifacts = [] } = await askInWorkspaceSession({
         harness: this.#harness,
@@ -3844,14 +3802,9 @@ export class FeishuHarnessBridge {
       const delivery = await this.#deliverArtifacts(chatId, messageId, artifacts, textReceipt);
       // Private patch: deliver <media>-referenced files after the artifact pipeline.
       await this.#sendMediaAttachments(chatId, media.attachments, { replyTo: messageId });
-      // Issue #38: implicit fallback for skill-generated files (e.g. calorie
-      // HTML) the model never registered nor mentioned; deduped against the
-      // artifact pipeline and <media> attachments above.
-      const { excludePaths, excludeNames } = this.#attachmentExcludes(artifacts, media.attachments);
-      const snapshotSent = await this.#sendAttachments(chatId, answer, { replyTo: messageId, beforeSnapshot, excludePaths, excludeNames });
       const artifactDispatched = delivery.receipt.artifacts.some(
         ({ outcome }) => outcome === 'sent' || outcome === 'unknown',
-      ) || snapshotSent > 0;
+      );
       if (textSendError && !artifactDispatched && !delivery.failureNoticeVisible) {
         throw textSendError;
       }
@@ -3950,14 +3903,9 @@ export class FeishuHarnessBridge {
         );
         // Private patch: deliver <media>-referenced files after the artifact pipeline.
         await this.#sendMediaAttachments(chatId, media.attachments, { replyTo: messageId });
-        // Issue #38: implicit fallback for skill-generated files (e.g. calorie
-        // HTML) the model never registered nor mentioned; deduped against the
-        // artifact pipeline and <media> attachments above.
-        const { excludePaths: excludePaths2, excludeNames: excludeNames2 } = this.#attachmentExcludes(completedArtifacts, media.attachments);
-        const snapshotSent2 = await this.#sendAttachments(chatId, completedAnswer, { replyTo: messageId, beforeSnapshot, excludePaths: excludePaths2, excludeNames: excludeNames2 });
         const artifactDispatched = delivery.receipt.artifacts.some(
           ({ outcome }) => outcome === 'sent' || outcome === 'unknown',
-        ) || snapshotSent2 > 0;
+        );
         if (textSendError && !artifactDispatched && !delivery.failureNoticeVisible) {
           throw textSendError;
         }
@@ -4007,14 +3955,9 @@ export class FeishuHarnessBridge {
       const delivery = await this.#deliverArtifacts(chatId, messageId, artifacts, textReceipt);
       // Private patch: deliver <media>-referenced files after the artifact pipeline.
       await this.#sendMediaAttachments(chatId, media.attachments, { replyTo: messageId });
-      // Issue #38: implicit fallback for skill-generated files (e.g. calorie
-      // HTML) the model never registered nor mentioned; deduped against the
-      // artifact pipeline and <media> attachments above.
-      const { excludePaths: excludePaths3, excludeNames: excludeNames3 } = this.#attachmentExcludes(artifacts, media.attachments);
-      const snapshotSent3 = await this.#sendAttachments(chatId, answer, { replyTo: messageId, beforeSnapshot, excludePaths: excludePaths3, excludeNames: excludeNames3 });
       const artifactDispatched = delivery.receipt.artifacts.some(
         ({ outcome }) => outcome === 'sent' || outcome === 'unknown',
-      ) || snapshotSent3 > 0;
+      );
       if (textSendError && !artifactDispatched && !delivery.failureNoticeVisible) {
         throw textSendError;
       }
@@ -4036,13 +3979,6 @@ export class FeishuHarnessBridge {
     );
     // Private patch: deliver <media>-referenced files after the artifact pipeline.
     await this.#sendMediaAttachments(chatId, completedMedia?.attachments ?? [], { replyTo: messageId });
-    // Issue #38: implicit fallback for skill-generated files (e.g. calorie
-    // HTML) the model never registered nor mentioned; deduped against the
-    // artifact pipeline and <media> attachments above.
-    {
-      const { excludePaths: excludePaths4, excludeNames: excludeNames4 } = this.#attachmentExcludes(completedArtifacts, completedMedia?.attachments ?? []);
-      await this.#sendAttachments(chatId, completedAnswer, { replyTo: messageId, beforeSnapshot, excludePaths: excludePaths4, excludeNames: excludeNames4 });
-    }
     this.#status.streamResponses = (this.#status.streamResponses ?? 0) + 1;
     return delivery;
   }

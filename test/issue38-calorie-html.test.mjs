@@ -1,21 +1,19 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import test from 'node:test';
 
-import { extractAttachments } from '../src/channels/feishu/attachment-parser.mjs';
-import { __issue38SnapshotHelpers } from '../src/channels/feishu/bridge.mjs';
+import {
+  extractAttachments,
+  extractMediaAttachments,
+} from '../src/channels/feishu/attachment-parser.mjs';
 import {
   OUTBOUND_ARTIFACT_TOOL,
   OutboundArtifactRegistry,
   installOutboundArtifactTool,
 } from '../src/channels/shared/semantic/artifact.mjs';
 
-// Issue #38: xiaosun runs calorie HELP, generates HTML, Feishu gets nothing.
-// The model neither calls the file-return tool nor mentions a path, so the
-// artifact pipeline input is zero and only a workspace snapshot fallback can
-// return the skill product.
+// Issue #38, R1: the old convention rules. Only files the model explicitly
+// declares (tool call, [[file:]], markdown image, <media>, bare path) are
+// delivered. Files mentioned nowhere are never auto-sent.
 
 test('issue38: return-file prompt covers skill products and the current channel', () => {
   let section;
@@ -31,7 +29,18 @@ test('issue38: return-file prompt covers skill products and the current channel'
   assert.match(section.text, new RegExp(OUTBOUND_ARTIFACT_TOOL));
 });
 
-test('issue38: pathless skill answer yields zero explicit attachments', async () => {
+test('issue38: shared prompt stays channel-agnostic (no feishu-only tags)', () => {
+  let section;
+  installOutboundArtifactTool({
+    tools: { register() {} },
+    on() {},
+    systemPrompt: { section(value) { section = value; } },
+  }, { registry: new OutboundArtifactRegistry() });
+  assert.doesNotMatch(section.text, /<media/);
+  assert.doesNotMatch(section.text, /feishu/i);
+});
+
+test('issue38: pathless skill answer yields zero attachments (old rule)', async () => {
   const answer = '卡路里报告已生成，请查看。';
   const statOk = async () => ({ isFile: () => true, size: 1024 });
   const { attachments } = await extractAttachments(answer, {
@@ -41,39 +50,25 @@ test('issue38: pathless skill answer yields zero explicit attachments', async ()
   assert.equal(attachments.length, 0);
 });
 
-test('issue38: snapshot fallback finds HTML generated during the turn', async (t) => {
-  const workspace = await mkdtemp(join(tmpdir(), 'issue38-workspace-'));
-  t.after(async () => {
-    await rm(workspace, { recursive: true, force: true });
+test('issue38: media tag declares the file and is stripped from text', async () => {
+  const answer = '报告在此 <media src="/workspace/report.html" type="file" /> 请查收';
+  const statOk = async () => ({ isFile: () => true, size: 2048 });
+  const { attachments, cleanedText } = await extractMediaAttachments(answer, {
+    allowedRoots: ['/workspace'],
+    statImpl: statOk,
   });
-  const { snapshotFiles, diffSnapshot } = __issue38SnapshotHelpers;
-  const before = await snapshotFiles([workspace]);
-  await writeFile(join(workspace, 'calorie-report.html'), '<html>calorie</html>');
-  const found = await diffSnapshot(before, [workspace]);
-  assert.equal(found.length, 1);
-  assert.equal(found[0].name, 'calorie-report.html');
+  assert.equal(attachments.length, 1);
+  assert.equal(attachments[0].name, 'report.html');
+  assert.doesNotMatch(cleanedText, /<media/);
+  assert.match(cleanedText, /请查收/);
 });
 
-test('issue38: snapshot fallback ignores non-deliverable extensions', async (t) => {
-  const workspace = await mkdtemp(join(tmpdir(), 'issue38-workspace-'));
-  t.after(async () => {
-    await rm(workspace, { recursive: true, force: true });
+test('issue38: media tag with missing file sends nothing', async () => {
+  const answer = '报告在此 <media src="/workspace/missing.html" />';
+  const statMissing = async () => { throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' }); };
+  const { attachments } = await extractMediaAttachments(answer, {
+    allowedRoots: ['/workspace'],
+    statImpl: statMissing,
   });
-  const { snapshotFiles, diffSnapshot } = __issue38SnapshotHelpers;
-  const before = await snapshotFiles([workspace]);
-  await writeFile(join(workspace, 'notes.exe'), 'binary');
-  const found = await diffSnapshot(before, [workspace]);
-  assert.equal(found.length, 0);
-});
-
-test('issue38: unchanged workspace produces no implicit attachments', async (t) => {
-  const workspace = await mkdtemp(join(tmpdir(), 'issue38-workspace-'));
-  t.after(async () => {
-    await rm(workspace, { recursive: true, force: true });
-  });
-  const { snapshotFiles, diffSnapshot } = __issue38SnapshotHelpers;
-  await writeFile(join(workspace, 'old.html'), '<html>old</html>');
-  const before = await snapshotFiles([workspace]);
-  const found = await diffSnapshot(before, [workspace]);
-  assert.equal(found.length, 0);
+  assert.equal(attachments.length, 0);
 });
