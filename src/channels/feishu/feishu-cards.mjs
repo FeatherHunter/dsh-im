@@ -15,6 +15,7 @@
  */
 
 import { t } from '../shared/i18n.mjs';
+import { menuStatusLine } from './card-status.mjs';
 
 export const MENU_PAGE_SIZE = 10;
 
@@ -33,7 +34,7 @@ function markdown(content) {
 function button(content, actionValue) {
   return {
     tag: 'column_set',
-    flex_mode: 'none',
+    flex_mode: 'flow',
     columns: [{
       tag: 'column',
       width: 'weighted',
@@ -68,7 +69,7 @@ function buttonElement(content, actionValue) {
 function buttonPair(leftContent, leftAction, rightContent, rightAction) {
   return {
     tag: 'column_set',
-    flex_mode: 'none',
+    flex_mode: 'flow',
     columns: [
       { tag: 'column', width: 'weighted', weight: 1, elements: [buttonElement(leftContent, leftAction)] },
       { tag: 'column', width: 'weighted', weight: 1, elements: [buttonElement(rightContent, rightAction)] },
@@ -149,8 +150,6 @@ export function menuCard(ctx) {
   // ── 设置区 ──────────────────────────────────────────────────
   elements.push({ tag: 'div', text: markdown(t('**设置**')) });
 
-  // ── 四个下拉菜单 2×2 网格 ────────────────────────────────────
-
   // 第 1 行：会话 + 工作区
   let sessionDropdown = null;
   if (hasSessions) {
@@ -165,7 +164,7 @@ export function menuCard(ctx) {
         tag: 'plain_text',
         content: currentSessionId ? t('切换会话') : t('选择会话（当前未绑定）'),
       },
-      initial_index: initialIndex(sessionPickOptions, currentSessionId),
+      initial_index: 0,
       options: sessionPickOptions,
       behaviors: [{ type: 'callback', value: { action: 'session_pick' } }],
     };
@@ -181,7 +180,7 @@ export function menuCard(ctx) {
       tag: 'select_static',
       name: 'workspace_pick',
       placeholder: { tag: 'plain_text', content: t('切换工作区') },
-      initial_index: initialIndex(wsOptions, currentWorkspace),
+      initial_index: 0,
       options: wsOptions,
       behaviors: [{ type: 'callback', value: { action: 'workspace_pick' } }],
     };
@@ -206,7 +205,7 @@ export function menuCard(ctx) {
       tag: 'select_static',
       name: 'preset_pick',
       placeholder: { tag: 'plain_text', content: t('切换预设') },
-      initial_index: initialIndex(setPresetOptions, presetSelected),
+      initial_index: 0,
       options: setPresetOptions,
       behaviors: [{ type: 'callback', value: { action: 'preset_pick' } }],
     };
@@ -229,28 +228,34 @@ export function menuCard(ctx) {
       tag: 'select_static',
       name: 'model_pick',
       placeholder: { tag: 'plain_text', content: t('切换模型') },
-      initial_index: initialIndex(setModelOptions, curModelId),
+      initial_index: 0,
       options: setModelOptions,
       behaviors: [{ type: 'callback', value: { action: 'model_pick' } }],
     };
   }
 
-  // 渲染 2×2 网格：图标 + 下拉并列
-  // 每一行用 4 列 column_set：图标 | 下拉 | 图标 | 下拉
-  function iconCol(icon) {
-    return { tag: 'column', width: 'weighted', weight: 0.1, vertical_align: 'center', elements: [{ tag: 'div', text: { tag: 'plain_text', content: icon } }] };
-  }
+  // 设置下拉双列（无图标列）
   function dropdownCol(el) {
     return { tag: 'column', width: 'weighted', weight: 1, elements: [el] };
   }
 
+  // 当前状态行：wrapping markdown 显示完整取值，窄屏换行不断尾
+  const curPresetLabel = presetFollowDefault
+    ? t("跟随默认")
+    : (presetItems.find((item) => item.id === curPresetId)?.label ?? curPresetId ?? t("未设置"));
+  elements.push({ tag: "div", text: markdown(menuStatusLine({
+    workspace: currentWorkspace,
+    sessionTitle: safeTitle(currentSessionTitle),
+    presetLabel: curPresetLabel,
+    modelId: curModelId,
+  })) });
   const row1 = [];
   if (sessionDropdown) row1.push(sessionDropdown);
   if (workspaceDropdown) row1.push(workspaceDropdown);
   if (row1.length === 2) {
     elements.push({
-      tag: 'column_set', flex_mode: 'none',
-      columns: [iconCol('💬'), dropdownCol(row1[0]), iconCol('📂'), dropdownCol(row1[1])],
+      tag: 'column_set', flex_mode: 'flow',
+      columns: [dropdownCol(row1[0]), dropdownCol(row1[1])],
     });
   } else if (row1[0]) {
     elements.push(row1[0]);
@@ -265,8 +270,8 @@ export function menuCard(ctx) {
   if (presetDropdown) row2.push(presetDropdown); else row2.push(presetBtn);
   if (modelDropdown) row2.push(modelDropdown); else row2.push(modelBtn);
   elements.push({
-    tag: 'column_set', flex_mode: 'none',
-    columns: [iconCol('🤖'), dropdownCol(row2[0]), iconCol('🧠'), dropdownCol(row2[1])],
+    tag: 'column_set', flex_mode: 'flow',
+    columns: [dropdownCol(row2[0]), dropdownCol(row2[1])],
   });
 
   // 新会话 + 全部会话按钮
@@ -283,7 +288,7 @@ export function menuCard(ctx) {
 
   // ── 补充指令 + 归档切换（并列）────────────────────────────
   elements.push({
-    tag: 'column_set', flex_mode: 'none',
+    tag: 'column_set', flex_mode: 'flow',
     columns: [
       {
         tag: 'column', width: 'weighted', weight: 1,
@@ -622,7 +627,7 @@ export function cardActionProbeCard(nonce) {
     },
     {
       tag: 'column_set',
-      flex_mode: 'none',
+      flex_mode: 'flow',
       columns: [{
         tag: 'column',
         width: 'weighted',
@@ -660,7 +665,7 @@ export function sessionListCard(workspace, sessions, page, total, watchedSession
   /** One row: fixed 90px watch toggle + the session button filling the rest. */
   const row = (watchButton, sessionButton) => ({
     tag: 'column_set',
-    flex_mode: 'none',
+    flex_mode: 'flow',
     horizontal_spacing: 'default',
     columns: [
       { tag: 'column', width: '90px', vertical_align: 'center', elements: [watchButton] },

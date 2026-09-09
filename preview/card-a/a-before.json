@@ -1,0 +1,574 @@
+{
+  "schema": "2.0",
+  "header": {
+    "title": {
+      "tag": "plain_text",
+      "content": "🤖 助手中心"
+    },
+    "template": "blue"
+  },
+  "body": {
+    "elements": [
+      {
+        "tag": "div",
+        "text": {
+          "tag": "lark_md",
+          "content": "**设置**"
+        }
+      },
+      {
+        "tag": "column_set",
+        "flex_mode": "none",
+        "columns": [
+          {
+            "tag": "column",
+            "width": "weighted",
+            "weight": 0.1,
+            "vertical_align": "center",
+            "elements": [
+              {
+                "tag": "div",
+                "text": {
+                  "tag": "plain_text",
+                  "content": "💬"
+                }
+              }
+            ]
+          },
+          {
+            "tag": "column",
+            "width": "weighted",
+            "weight": 1,
+            "elements": [
+              {
+                "tag": "select_static",
+                "name": "session_pick",
+                "placeholder": {
+                  "tag": "plain_text",
+                  "content": "切换会话"
+                },
+                "initial_index": 2,
+                "options": [
+                  {
+                    "text": {
+                      "tag": "plain_text",
+                      "content": "猎羽: /new 新需求讨论很长很长的标题"
+                    },
+                    "value": "sess-01"
+                  },
+                  {
+                    "text": {
+                      "tag": "plain_text",
+                      "content": "✓ 修登录bug-0801-终版真的终版-猎羽:new"
+                    },
+                    "value": "sess-02"
+                  },
+                  {
+                    "text": {
+                      "tag": "plain_text",
+                      "content": "数字兜底-工作区列表-会话列表-状态帮助全都要显示"
+                    },
+                    "value": "sess-03"
+                  }
+                ],
+                "behaviors": [
+                  {
+                    "type": "callback",
+                    "value": {
+                      "action": "session_pick"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "tag": "column",
+            "width": "weighted",
+            "weight": 0.1,
+            "vertical_align": "center",
+            "elements": [
+              {
+                "tag": "div",
+                "text": {
+                  "tag": "plain_text",
+                  "content": "📂"
+                }
+              }
+            ]
+          },
+          {
+            "tag": "column",
+            "width": "weighted",
+            "weight": 1,
+            "elements": [
+              {
+                "tag": "select_static",
+                "name": "workspace_pick",
+                "placeholder": {
+                  "tag": "plain_text",
+                  "content": "切换工作区"
+                },
+                "initial_index": 2,
+                "options": [
+                  {
+                    "text": {
+                      "tag": "plain_text",
+                      "content": "D:/dsh-plugin/dsh-im-main"
+                    },
+                    "value": "D:/dsh-plugin/dsh-im-main"
+                  },
+                  {
+                    "text": {
+                      "tag": "plain_text",
+                      "content": "✓ D:/very-long-workspace-path/my-project-subdir-0801-final"
+                    },
+                    "value": "D:/very-long-workspace-path/my-project-subdir-0801-final"
+                  }
+                ],
+                "behaviors": [
+                  {
+                    "type": "callback",
+                    "value": {
+                      "action": "workspace_pick"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "tag": "column_set",
+        "flex_mode": "none",
+        "columns": [
+          {
+            "tag": "column",
+            "width": "weighted",
+            "weight": 0.1,
+            "vertical_align": "center",
+            "elements": [
+              {
+                "tag": "div",
+                "text": {
+                  "tag": "plain_text",
+                  "content": "🤖"
+                }
+              }
+            ]
+          },
+          {
+            "tag": "column",
+            "width": "weighted",
+            "weight": 1,
+            "elements": [
+              {
+                "tag": "select_static",
+                "name": "preset_pick",
+                "placeholder": {
+                  "tag": "plain_text",
+                  "content": "切换预设"
+                },
+                "initial_index": 2,
+                "options": [
+                  {
+                    "text": {
+                      "tag": "plain_text",
+                      "content": "跟随默认"
+                    },
+                    "value": "__preset_follow_default__"
+                  },
+                  {
+                    "text": {
+                      "tag": "plain_text",
+                      "content": "✓ 编程助手超长预设名称-完整版"
+                    },
+                    "value": "preset-long-id-coding-assistant-v2"
+                  },
+                  {
+                    "text": {
+                      "tag": "plain_text",
+                      "content": "默认预设"
+                    },
+                    "value": "default"
+                  }
+                ],
+                "behaviors": [
+                  {
+                    "type": "callback",
+                    "value": {
+                      "action": "preset_pick"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "tag": "column",
+            "width": "weighted",
+            "weight": 0.1,
+            "vertical_align": "center",
+            "elements": [
+              {
+                "tag": "div",
+                "text": {
+                  "tag": "plain_text",
+                  "content": "🧠"
+                }
+              }
+            ]
+          },
+          {
+            "tag": "column",
+            "width": "weighted",
+            "weight": 1,
+            "elements": [
+              {
+                "tag": "column_set",
+                "flex_mode": "none",
+                "columns": [
+                  {
+                    "tag": "column",
+                    "width": "weighted",
+                    "weight": 1,
+                    "elements": [
+                      {
+                        "tag": "button",
+                        "text": {
+                          "tag": "plain_text",
+                          "content": "🧠 切换模型"
+                        },
+                        "type": "default",
+                        "width": "fill",
+                        "behaviors": [
+                          {
+                            "type": "callback",
+                            "value": {
+                              "action": "models"
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "tag": "column_set",
+        "flex_mode": "none",
+        "columns": [
+          {
+            "tag": "column",
+            "width": "weighted",
+            "weight": 1,
+            "elements": [
+              {
+                "tag": "button",
+                "text": {
+                  "tag": "plain_text",
+                  "content": "🆕 新会话"
+                },
+                "type": "default",
+                "width": "fill",
+                "behaviors": [
+                  {
+                    "type": "callback",
+                    "value": {
+                      "action": "new"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "tag": "column",
+            "width": "weighted",
+            "weight": 1,
+            "elements": [
+              {
+                "tag": "button",
+                "text": {
+                  "tag": "plain_text",
+                  "content": "📋 会话/关注"
+                },
+                "type": "default",
+                "width": "fill",
+                "behaviors": [
+                  {
+                    "type": "callback",
+                    "value": {
+                      "action": "sessions"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "tag": "hr"
+      },
+      {
+        "tag": "div",
+        "text": {
+          "tag": "lark_md",
+          "content": "**任务控制**"
+        }
+      },
+      {
+        "tag": "column_set",
+        "flex_mode": "none",
+        "columns": [
+          {
+            "tag": "column",
+            "width": "weighted",
+            "weight": 1,
+            "elements": [
+              {
+                "tag": "button",
+                "text": {
+                  "tag": "plain_text",
+                  "content": "⏹ 停止"
+                },
+                "type": "default",
+                "width": "fill",
+                "behaviors": [
+                  {
+                    "type": "callback",
+                    "value": {
+                      "action": "stop"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "tag": "column",
+            "width": "weighted",
+            "weight": 1,
+            "elements": [
+              {
+                "tag": "button",
+                "text": {
+                  "tag": "plain_text",
+                  "content": "📐 压缩"
+                },
+                "type": "default",
+                "width": "fill",
+                "behaviors": [
+                  {
+                    "type": "callback",
+                    "value": {
+                      "action": "compact"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "tag": "hr"
+      },
+      {
+        "tag": "column_set",
+        "flex_mode": "none",
+        "columns": [
+          {
+            "tag": "column",
+            "width": "weighted",
+            "weight": 1,
+            "elements": [
+              {
+                "tag": "div",
+                "text": {
+                  "tag": "lark_md",
+                  "content": "**补充指令**"
+                }
+              },
+              {
+                "tag": "select_static",
+                "name": "steer_pick",
+                "placeholder": {
+                  "tag": "plain_text",
+                  "content": "选择补充指令"
+                },
+                "initial_index": 0,
+                "options": [
+                  {
+                    "text": {
+                      "tag": "plain_text",
+                      "content": "继续"
+                    },
+                    "value": "继续"
+                  },
+                  {
+                    "text": {
+                      "tag": "plain_text",
+                      "content": "加速运行"
+                    },
+                    "value": "加速运行"
+                  },
+                  {
+                    "text": {
+                      "tag": "plain_text",
+                      "content": "总结当前进展"
+                    },
+                    "value": "总结当前进展"
+                  },
+                  {
+                    "text": {
+                      "tag": "plain_text",
+                      "content": "更简洁些"
+                    },
+                    "value": "更简洁些"
+                  },
+                  {
+                    "text": {
+                      "tag": "plain_text",
+                      "content": "更详细些"
+                    },
+                    "value": "更详细些"
+                  },
+                  {
+                    "text": {
+                      "tag": "plain_text",
+                      "content": "✏️ 更多 / 自定义…"
+                    },
+                    "value": "custom"
+                  }
+                ],
+                "behaviors": [
+                  {
+                    "type": "callback",
+                    "value": {
+                      "action": "steer_pick"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "tag": "column",
+            "width": "weighted",
+            "weight": 1,
+            "elements": [
+              {
+                "tag": "div",
+                "text": {
+                  "tag": "lark_md",
+                  "content": "🗄 归档：已隐藏"
+                }
+              },
+              {
+                "tag": "column_set",
+                "flex_mode": "none",
+                "columns": [
+                  {
+                    "tag": "column",
+                    "width": "weighted",
+                    "weight": 1,
+                    "elements": [
+                      {
+                        "tag": "button",
+                        "text": {
+                          "tag": "plain_text",
+                          "content": "切换归档显示"
+                        },
+                        "type": "default",
+                        "width": "fill",
+                        "behaviors": [
+                          {
+                            "type": "callback",
+                            "value": {
+                              "action": "archive_toggle"
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "tag": "hr"
+      },
+      {
+        "tag": "column_set",
+        "flex_mode": "none",
+        "columns": [
+          {
+            "tag": "column",
+            "width": "weighted",
+            "weight": 1,
+            "elements": [
+              {
+                "tag": "button",
+                "text": {
+                  "tag": "plain_text",
+                  "content": "📊 状态"
+                },
+                "type": "default",
+                "width": "fill",
+                "behaviors": [
+                  {
+                    "type": "callback",
+                    "value": {
+                      "action": "status"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "tag": "column",
+            "width": "weighted",
+            "weight": 1,
+            "elements": [
+              {
+                "tag": "button",
+                "text": {
+                  "tag": "plain_text",
+                  "content": "📖 帮助"
+                },
+                "type": "default",
+                "width": "fill",
+                "behaviors": [
+                  {
+                    "type": "callback",
+                    "value": {
+                      "action": "help"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "tag": "div",
+        "text": {
+          "tag": "lark_md",
+          "content": "**数字兜底**\n**1**工作区列表 · **2**新会话 · **3**会话列表 · **4**状态\n**5**🔧补全权限 · **6**帮助"
+        }
+      }
+    ]
+  }
+}

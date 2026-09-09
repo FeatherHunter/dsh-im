@@ -1,0 +1,27 @@
+<!doctype html><html lang=zh-CN><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1"><title>A方案预览 none vs flow</title><style>
+body{font-family:system-ui,PingFang SC,Microsoft YaHei,sans-serif;background:#f2f3f5;margin:0;padding:20px;color:#1f2329}
+h1{font-size:18px}p.sub{color:#646a73;font-size:13px}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}@media(max-width:800px){.grid{grid-template-columns:1fr}}
+.card{background:#fff;border-radius:12px;box-shadow:0 1px 4px rgba(0,0,0,.08);overflow:hidden}
+.card h2{font-size:14px;margin:0;padding:10px 14px;background:#e6f0ff;color:#1456f0}
+.body{padding:12px 14px}.sec{font-weight:700;margin:10px 0 6px}
+.row-none{display:flex;gap:6px}.row-none>*{flex:1;min-width:0}
+.row-flow{display:flex;gap:6px;flex-wrap:wrap}.row-flow>*{flex:1 1 140px;min-width:0}
+.pill{border:1px solid #dfe3e8;border-radius:8px;padding:8px 10px;font-size:13px;background:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.icon{flex:0 0 22px!important;text-align:center;border:none!important;padding:8px 0!important}
+.btnrow{display:flex;gap:6px;margin-top:6px}.btnrow .pill{flex:1;text-align:center;background:#f7f8fa}
+.frame{border:1px dashed #b6c2d1;border-radius:10px;padding:10px;margin-top:8px;background:#fbfcfe}
+.frame h3{margin:0 0 8px;font-size:12px;color:#646a73;font-weight:600}
+.narrow{width:340px;max-width:100%}.wide{width:100%}
+.tag{display:inline-block;font-size:11px;padding:1px 8px;border-radius:99px;background:#e6f0ff;color:#1456f0;margin-left:6px}
+.tag.bad{background:#fee9e6;color:#d81e06}.note{font-size:12px;color:#646a73;line-height:1.7}
+code{background:#eef1f4;padding:1px 6px;border-radius:6px}
+</style><h1>A方案预览：只改 <code>flex_mode: none → flow</code><span class=tag>电脑基本不变</span><span class="tag bad">手机省略号明显减少</span></h1>
+<p class=sub>造的数据和你截图同量级：会话“修登录bug-0801-终版真的终版”、工作区55字符长路径、预设15字。左侧是现在（none：硬压），右侧是A方案（flow：放不下自动换行）。<br>官方依据：<code>column_set.flex_mode</code> — none=窄屏按比例压缩，flow=自动换行，stretch=上下堆叠。</p>
+<div class=grid>
+<div class=card><h2>🖥 电脑宽 700px — 现在 none</h2><div class=body><div class=frame><h3>设置区（4列硬压，但宽屏够宽所以看得全）</h3><div class=row-none><div class=pill>✓ 修登录bug-0801-终版真的终版-猎羽:new</div><div class=pill>✓ D:/very-long…/my-project-subdir-0801-final</div></div><div class=row-none style="margin-top:6px"><div class=pill>✓ 编程助手超长预设名称-完整版</div><div class=pill>🧠 切换模型</div></div></div><div class=frame><h3>下面短按钮组（一直没问题）</h3><div class=btnrow><div class=pill>🆕 新会话</div><div class=pill>📋 会话/关注</div></div></div><p class=note>结论：电脑宽，现在也能看全，A方案改完还是并排，观感几乎不变。</p></div></div>
+<div class=card><h2>🖥 电脑宽 700px — A方案 flow</h2><div class=body><div class=frame><h3>设置区（宽屏依然并排）</h3><div class=row-flow><div class=pill>✓ 修登录bug-0801-终版真的终版-猎羽:new</div><div class=pill>✓ D:/very-long…/my-project-subdir-0801-final</div></div><div class=row-flow style="margin-top:6px"><div class=pill>✓ 编程助手超长预设名称-完整版</div><div class=pill>🧠 切换模型</div></div></div><div class=frame><h3>下面短按钮组</h3><div class=btnrow><div class=pill>🆕 新会话</div><div class=pill>📋 会话/关注</div></div></div><p class=note>结论：和左侧几乎一样 ✅ 这就是你要的“电脑差不多”。</p></div></div>
+<div class=card><h2>📱 手机窄 340px — 现在 none<span class="tag bad">费劲</span></h2><div class=body><div class="frame narrow"><h3>设置区（每列只剩~40%宽）</h3><div class=row-none><div class=pill>✓ S…</div><div class=pill>✓ …</div></div><div class=row-none style="margin-top:6px"><div class=pill>✓ P…</div><div class=pill>🧠 切…</div></div><div class=row-none style="margin-top:6px"><div class=pill>选择补…</div><div class=pill>切换归档…</div></div></div><p class=note>和你截图一模一样：<code>S… / P… / 切… / 选择补… / 会话/…</code>，每个都要点开猜。</p></div></div>
+<div class=card><h2>📱 手机窄 340px — A方案 flow<span class=tag>好很多</span></h2><div class=body><div class="frame narrow"><h3>设置区（自动换行，一列独占一行）</h3><div class=row-flow><div class=pill>✓ 修登录bug-0801-终版真的终版-猎…</div><div class=pill>✓ D:/very-long…/0801-final</div></div><div class=row-flow style="margin-top:6px"><div class=pill>✓ 编程助手超长预设名称-完整版</div><div class=pill>🧠 切换模型</div></div><div class=row-flow style="margin-top:6px"><div class=pill>选择补充指令</div><div class=pill>切换归档显示</div></div></div><p class=note>同样文字，flow下每个占满整行：只剩尾巴一点省略，基本一眼看懂。代价是卡片变高，要多滑两下。<br>极限情况（55字符路径）窄屏还是会剩一点尾巴省略，这就是A方案的天花板；要彻底零省略，得看C方案（状态和操作分离）。</p></div></div>
+</div>
+<p class=note>想在真机验证：把 <code>preview/card-a/a-before.json</code> / <code>a-after.json</code> 粘到飞书卡片搭建工具 → 右上角切“移动端/桌面端”预览。真机落地要改 <code>src\channels\feishu\feishu-cards.mjs</code> 里8处 <code>flex_mode:'none'→'flow'</code> + <code>npm run build</code> + 重启dsh。</p></html>

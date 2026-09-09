@@ -1,0 +1,102 @@
+{
+  "before": [
+    {
+      "name": "session_pick",
+      "shown": "✓ 修登录bug-0801-终版真的终版-猎羽:new",
+      "placeholder": "切换会话",
+      "options": 3
+    },
+    {
+      "name": "workspace_pick",
+      "shown": "✓ D:/very-long-workspace-path/my-project-subdir-0801-final",
+      "placeholder": "切换工作区",
+      "options": 2
+    },
+    {
+      "name": "preset_pick",
+      "shown": "✓ 编程助手超长预设名称-完整版",
+      "placeholder": "切换预设",
+      "options": 3
+    },
+    {
+      "button": "🧠 切换模型"
+    },
+    {
+      "button": "🆕 新会话"
+    },
+    {
+      "button": "📋 会话/关注"
+    },
+    {
+      "button": "⏹ 停止"
+    },
+    {
+      "button": "📐 压缩"
+    },
+    {
+      "name": "steer_pick",
+      "shown": "选择补充指令",
+      "placeholder": "选择补充指令",
+      "options": 6
+    },
+    {
+      "button": "切换归档显示"
+    },
+    {
+      "button": "📊 状态"
+    },
+    {
+      "button": "📖 帮助"
+    }
+  ],
+  "after": [
+    {
+      "name": "session_pick",
+      "shown": "✓ 修登录bug-0801-终版真的终版-猎羽:new",
+      "placeholder": "切换会话",
+      "options": 3
+    },
+    {
+      "name": "workspace_pick",
+      "shown": "✓ D:/very-long-workspace-path/my-project-subdir-0801-final",
+      "placeholder": "切换工作区",
+      "options": 2
+    },
+    {
+      "name": "preset_pick",
+      "shown": "✓ 编程助手超长预设名称-完整版",
+      "placeholder": "切换预设",
+      "options": 3
+    },
+    {
+      "button": "🧠 切换模型"
+    },
+    {
+      "button": "🆕 新会话"
+    },
+    {
+      "button": "📋 会话/关注"
+    },
+    {
+      "button": "⏹ 停止"
+    },
+    {
+      "button": "📐 压缩"
+    },
+    {
+      "name": "steer_pick",
+      "shown": "选择补充指令",
+      "placeholder": "选择补充指令",
+      "options": 6
+    },
+    {
+      "button": "切换归档显示"
+    },
+    {
+      "button": "📊 状态"
+    },
+    {
+      "button": "📖 帮助"
+    }
+  ]
+}

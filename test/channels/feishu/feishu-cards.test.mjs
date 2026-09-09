@@ -131,20 +131,37 @@ test('custom steer card wraps input and submit in a form container', () => {
   assert.ok(back);
 });
 
-test('menu session dropdown highlights the currently bound session via initial_index', () => {
+test("menu dropdowns use placeholder display so long titles never truncate on mobile", () => {
   const sessions = [
-    { id: 'session-1', title: 'First' },
-    { id: 'session-2', title: 'Second' },
-    { id: 'session-3', title: 'Third' },
+    { id: "session-1", title: "First with a very long title that would truncate on mobile" },
+    { id: "session-2", title: "Second with a very long title that would truncate on mobile" },
   ];
   const card = JSON.parse(menuCard({
-    currentSession: { id: 'session-2', title: 'Second' },
+    workspaces: ["/ws/short", "/ws/a-very-long-workspace-path-that-would-truncate"],
+    currentWorkspace: "/ws/a-very-long-workspace-path-that-would-truncate",
+    currentSession: { id: "session-2", title: "Second with a very long title that would truncate on mobile" },
     sessions,
+    presetCatalog: {
+      items: [
+        { id: "p1", label: "Preset One" },
+        { id: "p2", label: "Preset Two with a long label" },
+      ],
+      _currentId: "p2",
+      defaultId: "p1",
+    },
+    modelCatalog: {
+      groups: [
+        { id: "g1", name: "Group One", models: [{ id: "m1", name: "Model One" }, { id: "m2", name: "Model Two" }] },
+      ],
+      current: { provider: "g1", model: "m2" },
+    },
   }));
-  const pick = selects(card).find((s) => s.name === 'session_pick');
-  assert.ok(pick, 'menu must render a session dropdown');
-  // initial_index is 1-based; the currently bound session sits at index 2.
-  assert.equal(pick.initial_index, 2);
+  for (const name of ["session_pick", "workspace_pick", "preset_pick", "model_pick"]) {
+    const pick = selects(card).find((s) => s.name === name);
+    assert.ok(pick, "menu must render " + name);
+    assert.equal(pick.initial_index, 0, name + " must show its short placeholder");
+  }
+  assert.match(JSON.stringify(card), /Second with a very long title/, "current value stays visible in the wrapping status line");
 });
 
 test('model card dropdown highlights the current model via initial_index', () => {
